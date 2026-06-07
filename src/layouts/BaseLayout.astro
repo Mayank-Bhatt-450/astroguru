@@ -25,7 +25,10 @@ const canonicalUrl = new URL(Astro.url.pathname, siteUrl).href;
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{title}</title>
   <meta name="description" content={description} />
+  <meta name="theme-color" content="#1A0F2E" />
+  <meta name="author" content="Jyotish Consultations" />
   <link rel="canonical" href={canonicalUrl} />
+  <link rel="alternate" hreflang="en" href={canonicalUrl} />
   {noIndex && <meta name="robots" content="noindex, nofollow" />}
 
   <!-- Open Graph -->
@@ -34,14 +37,18 @@ const canonicalUrl = new URL(Astro.url.pathname, siteUrl).href;
   <meta property="og:title"       content={title} />
   <meta property="og:description" content={description} />
   <meta property="og:image"       content={`${siteUrl}${ogImage}`} />
+  <meta property="og:locale"      content="en_IN" />
+  <meta property="og:site_name"   content="Jyotish Consultations" />
 
   <!-- Twitter -->
   <meta name="twitter:card"        content="summary_large_image" />
   <meta name="twitter:title"       content={title} />
   <meta name="twitter:description" content={description} />
+  <meta name="twitter:image"       content={`${siteUrl}${ogImage}`} />
 
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
 
   <!-- Fonts: preconnect then load -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -50,15 +57,25 @@ const canonicalUrl = new URL(Astro.url.pathname, siteUrl).href;
   <!-- Global CSS from public/styles/ — served as static file, no 404 -->
   <link rel="stylesheet" href="/styles/global.css" />
 
-  <!-- Structured Data -->
+  <!-- Structured Data: Organization + ProfessionalService -->
   <script type="application/ld+json" set:html={JSON.stringify({
     "@context": "https://schema.org",
-    "@type": "ProfessionalService",
+    "@type": ["ProfessionalService", "LocalBusiness"],
     "name": "Jyotish Consultations",
     "description": description,
     "url": siteUrl,
+    "logo": `${siteUrl}/favicon.svg`,
     "serviceType": ["Astrology", "Numerology", "Vastu Shastra"],
     "priceRange": "₹₹",
+    "areaServed": {
+      "@type": "Country",
+      "name": "India"
+    },
+    "contactPoint": {
+      "@type": "ContactPoint",
+      "contactType": "customer service",
+      "availableLanguage": ["English", "Hindi"]
+    }
   })} />
 </head>
 <body>
@@ -129,7 +146,7 @@ const canonicalUrl = new URL(Astro.url.pathname, siteUrl).href;
       <div>
         <p style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:16px;">Company</p>
         <div style="display:flex;flex-direction:column;gap:10px;">
-          <a href="/#about" style="font-size:14px;color:rgba(255,255,255,0.65);text-decoration:none;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.65)'">About</a>
+          <a href="/about" style="font-size:14px;color:rgba(255,255,255,0.65);text-decoration:none;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.65)'">About</a>
           <a href="/#testimonials" style="font-size:14px;color:rgba(255,255,255,0.65);text-decoration:none;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.65)'">Reviews</a>
           <a href="/#faqs" style="font-size:14px;color:rgba(255,255,255,0.65);text-decoration:none;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.65)'">FAQs</a>
         </div>

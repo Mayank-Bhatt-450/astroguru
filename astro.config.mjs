@@ -9,6 +9,7 @@ export default defineConfig({
   integrations: [
     react(),
   ],
+  site: process.env.PUBLIC_SITE_URL || 'https://jyotish.example.com',
   vite: {
     define: {
       // Expose only safe public env vars to client

@@ -1,0 +1,14 @@
+# Robots.txt for Jyotish Consultations
+# https://jyotish.example.com
+
+User-agent: *
+Allow: /
+
+# Disallow admin area from indexing
+Disallow: /admin/
+
+# Sitemap location
+Sitemap: https://jyotish.example.com/sitemap-index.xml
+
+# Crawl-delay for polite crawling (optional)
+Crawl-delay: 1
