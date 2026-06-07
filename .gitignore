@@ -1,0 +1,78 @@
+# Dependencies
+node_modules/
+
+# Production build
+build/
+dist/
+out/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage/
+
+# Cache
+.cache/
+.parcel-cache/
+.vite/
+.eslintcache
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+
+# React Native (if applicable)
+.expo/
+.expo-shared/
+
+# TypeScript
+*.tsbuildinfo
+
+# Package manager files (optional)
+.pnpm-store/
+
+# Local Netlify folder
+.netlify/
+
+# Local Vercel folder
+.vercel/
+
+# Storybook
+storybook-static/
+
+# Testing
+playwright-report/
+test-results/
+
+# Misc
+*.tgz

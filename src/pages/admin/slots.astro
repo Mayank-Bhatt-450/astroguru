@@ -1,0 +1,17 @@
+---
+// src/pages/admin/slots.astro
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import AdminSlotManager from '../../components/admin/AdminSlotManager';
+---
+
+<AdminLayout title="Manage Slots" activeSection="slots">
+  <!-- Pass services from server or let the component fetch them -->
+  <AdminSlotManager
+    client:load
+    services={[
+      { id: 'astrology',    name: 'Astrology',    iconEmoji: '☽' },
+      { id: 'numerology',   name: 'Numerology',   iconEmoji: '🔢' },
+      { id: 'vastu',        name: 'Vastu Shastra', iconEmoji: '🏠' },
+    ]}
+  />
+</AdminLayout>

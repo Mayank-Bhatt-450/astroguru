@@ -1,0 +1,88 @@
+---
+// src/layouts/AdminLayout.astro
+export interface Props {
+  title?: string;
+  activeSection?: string;
+}
+const { title = 'Admin Panel', activeSection = 'dashboard' } = Astro.props;
+
+const nav = [
+  { id: 'dashboard', icon: '▦',  label: 'Dashboard',       href: '/admin' },
+  { id: 'bookings',  icon: '📅', label: 'Bookings',        href: '/admin/bookings' },
+  { id: 'slots',     icon: '⏰', label: 'Manage Slots',    href: '/admin/slots' },
+  { id: 'content',   icon: '✏️', label: 'Content Manager', href: '/admin/content' },
+  { id: 'settings',  icon: '⚙️', label: 'Settings',        href: '/admin/settings' },
+];
+---
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title} — Jyotish Admin</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="/styles/global.css" />
+</head>
+<body style="background:var(--color-fog);">
+
+<div class="admin-layout">
+
+  <!-- Sidebar -->
+  <aside class="admin-sidebar" id="adminSidebar">
+    <div class="admin-sidebar-header">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="width:28px;height:28px;background:var(--color-voltage-violet);border-radius:8px;display:flex;align-items:center;justify-content:center;color:white;font-size:14px;">✦</div>
+        <span style="font-weight:700;font-size:15px;color:var(--color-midnight-ink);">Jyotish Admin</span>
+      </div>
+    </div>
+
+    <nav class="admin-nav">
+      {nav.map(item => (
+        <a href={item.href} class={`admin-nav-item ${activeSection === item.id ? 'active' : ''}`}>
+          <span style="font-size:15px;">{item.icon}</span>
+          {item.label}
+        </a>
+      ))}
+    </nav>
+
+    <div style="padding:12px 8px;border-top:1px solid var(--color-mist);">
+      <a href="/" class="admin-nav-item" style="opacity:0.6;font-size:13px;">
+        ← Back to Site
+      </a>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="admin-content">
+    <div class="admin-topbar">
+      <h1 style="font-family:var(--font-display);font-size:22px;font-weight:600;color:var(--color-midnight-ink);">{title}</h1>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span class="badge badge-violet">Admin</span>
+        <button
+          id="clearCacheBtn"
+          class="btn btn-ghost"
+          style="padding:8px 16px;font-size:13px;"
+        >
+          ↺ Clear Cache
+        </button>
+      </div>
+    </div>
+
+    <slot />
+  </div>
+
+</div>
+
+<script>
+  document.getElementById('clearCacheBtn')?.addEventListener('click', () => {
+    const cleared = Object.keys(localStorage).filter(k => k.startsWith('jy_'));
+    cleared.forEach(k => localStorage.removeItem(k));
+    alert(`Cache cleared (${cleared.length} item${cleared.length !== 1 ? 's' : ''}). Reload the site to fetch fresh data.`);
+  });
+</script>
+
+</body>
+</html>

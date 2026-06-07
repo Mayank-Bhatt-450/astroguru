@@ -1,0 +1,42 @@
+---
+// src/pages/index.astro
+import BaseLayout from '../layouts/BaseLayout.astro';
+import AppBootstrap from '../components/islands/AppBootstrap';
+import HeroSection from '../components/islands/HeroSection';
+import ServicesSection from '../components/islands/ServicesSection';
+import SlotPickerSection from '../components/islands/SlotPickerSection';
+import PricingSection from '../components/islands/PricingSection';
+import TestimonialsSection from '../components/islands/TestimonialsSection';
+import FaqSection from '../components/islands/FaqSection';
+import BookingModal from '../components/booking/BookingModal';
+import WhatsAppFab from '../components/islands/WhatsAppFab';
+---
+
+<BaseLayout>
+  <!-- AppBootstrap loads boot data and hydrates the store for all islands -->
+  <AppBootstrap client:load />
+
+  <!-- Hero Section (React island - reads from store) -->
+  <HeroSection client:load />
+
+  <!-- Services Section -->
+  <ServicesSection client:visible />
+
+  <!-- Slot Picker (anchored as "Book" target) -->
+  <SlotPickerSection client:visible />
+
+  <!-- Pricing -->
+  <PricingSection client:visible />
+
+  <!-- Testimonials -->
+  <TestimonialsSection client:visible />
+
+  <!-- FAQs -->
+  <FaqSection client:visible />
+
+  <!-- Booking Modal (global, rendered at root level) -->
+  <BookingModal client:load />
+
+  <!-- WhatsApp FAB -->
+  <WhatsAppFab client:load />
+</BaseLayout>

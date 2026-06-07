@@ -1,0 +1,8 @@
+---
+// src/pages/admin/settings.astro
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import AdminSettings from '../../components/admin/AdminSettings';
+---
+<AdminLayout title="Settings" activeSection="settings">
+  <AdminSettings client:load />
+</AdminLayout>

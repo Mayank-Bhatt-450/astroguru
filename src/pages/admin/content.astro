@@ -1,0 +1,8 @@
+---
+// src/pages/admin/content.astro
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import AdminContentManager from '../../components/admin/AdminContentManager';
+---
+<AdminLayout title="Content Manager" activeSection="content">
+  <AdminContentManager client:load />
+</AdminLayout>
