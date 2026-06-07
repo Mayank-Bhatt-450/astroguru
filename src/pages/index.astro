@@ -10,9 +10,15 @@ import TestimonialsSection from '../components/islands/TestimonialsSection';
 import FaqSection from '../components/islands/FaqSection';
 import BookingModal from '../components/booking/BookingModal';
 import WhatsAppFab from '../components/islands/WhatsAppFab';
+
+const siteUrl = import.meta.env.PUBLIC_SITE_URL || 'https://jyotish.example.com';
 ---
 
-<BaseLayout>
+<BaseLayout
+  title="Jyotish Consultations – Expert Vedic Astrology, Numerology & Vastu in India"
+  description="Book private 1-on-1 consultations with expert Vedic astrologer. Specializing in astrology readings, numerology analysis, and Vastu Shastra guidance. Online sessions available across India and worldwide."
+  ogImage="/og-image.jpg"
+>
   <!-- AppBootstrap loads boot data and hydrates the store for all islands -->
   <AppBootstrap client:load />
 
@@ -39,4 +45,104 @@ import WhatsAppFab from '../components/islands/WhatsAppFab';
 
   <!-- WhatsApp FAB -->
   <WhatsAppFab client:load />
+
+  <!-- Structured Data: FAQPage -->
+  <script type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is Vedic astrology?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Vedic astrology, also known as Jyotish Shastra, is an ancient Indian system of astrology that uses the sidereal zodiac. It provides insights into personality, life events, relationships, career, and spiritual growth based on planetary positions at the time of birth."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How do I prepare for an astrology consultation?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "For the most accurate reading, please have your exact date, time, and place of birth ready. Think about specific questions or life areas you'd like guidance on. Find a quiet space for your session where you won't be disturbed."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What is the difference between astrology and numerology?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Astrology studies planetary positions and their influence on human affairs, while numerology analyzes the vibrational significance of numbers derived from your name and birth date. Both offer unique insights and can complement each other."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Are consultations conducted online or in-person?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "All consultations are conducted online via video call or phone. This allows us to serve clients across India and internationally while providing the same quality of personalized guidance."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What is your cancellation policy?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Free cancellation is available up to 24 hours before your appointment with a full refund. Cancellations within 24 hours may incur a 50% fee. Please see our Refund Policy page for complete details."
+        }
+      }
+    ]
+  })} />
+
+  <!-- Structured Data: Service -->
+  <script type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "Service",
+    "serviceType": "Astrology Consultation",
+    "provider": {
+      "@type": "LocalBusiness",
+      "name": "Jyotish Consultations"
+    },
+    "areaServed": {
+      "@type": "Country",
+      "name": "India"
+    },
+    "offers": {
+      "@type": "Offer",
+      "priceCurrency": "INR",
+      "price": "1499.00",
+      "availability": "https://schema.org/InStock",
+      "url": `${siteUrl}/#book`
+    },
+    "hasOfferCatalog": {
+      "@type": "OfferCatalog",
+      "name": "Consultation Services",
+      "itemListElement": [
+        {
+          "@type": "Offer",
+          "itemOffered": {
+            "@type": "Service",
+            "name": "Vedic Astrology Reading",
+            "description": "Comprehensive birth chart analysis with personalized guidance"
+          }
+        },
+        {
+          "@type": "Offer",
+          "itemOffered": {
+            "@type": "Service",
+            "name": "Numerology Consultation",
+            "description": "Name and birth number analysis for life path guidance"
+          }
+        },
+        {
+          "@type": "Offer",
+          "itemOffered": {
+            "@type": "Service",
+            "name": "Vastu Shastra Consultation",
+            "description": "Home and office energy balancing recommendations"
+          }
+        }
+      ]
+    }
+  })} />
 </BaseLayout>

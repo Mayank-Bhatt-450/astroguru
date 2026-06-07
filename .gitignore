@@ -1,78 +1,65 @@
+```
 # Dependencies
 node_modules/
 
-# Production build
-build/
+# Build outputs
 dist/
-out/
+build/
+.cache/
 
 # Environment variables
 .env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
+*.env.*
 
 # Logs
-logs
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
 
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-
-# Coverage
-coverage/
-
-# Cache
-.cache/
-.parcel-cache/
-.vite/
-.eslintcache
-
-# IDEs and Editors
+# IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
+*.tmp
 
-# OS Files
+# OS files
 .DS_Store
 Thumbs.db
 
-# Temporary files
-tmp/
-temp/
+# Coverage
+coverage/
+htmlcov/
+.coverage
 
-# React Native (if applicable)
-.expo/
-.expo-shared/
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage*
+.nox/
+.pytest_cache/
+.mypy_cache/
 
-# TypeScript
-*.tsbuildinfo
+# Node.js
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+node_modules/
+jspm_packages/
+web_modules/
+lib-cov/
+*.seed
+*.pid
+*.gz
 
-# Package manager files (optional)
-.pnpm-store/
-
-# Local Netlify folder
-.netlify/
-
-# Local Vercel folder
-.vercel/
-
-# Storybook
-storybook-static/
-
-# Testing
-playwright-report/
-test-results/
-
-# Misc
-*.tgz
+# Astro-specific
+.astroturf/
+```
