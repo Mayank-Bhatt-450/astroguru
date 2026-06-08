@@ -1,42 +1,44 @@
 ---
 // src/pages/index.astro
 import BaseLayout from '../layouts/BaseLayout.astro';
-import AppBootstrap from '../components/islands/AppBootstrap';
-import HeroSection from '../components/islands/HeroSection';
-import ServicesSection from '../components/islands/ServicesSection';
-import SlotPickerSection from '../components/islands/SlotPickerSection';
-import PricingSection from '../components/islands/PricingSection';
+import AppBootstrap      from '../components/islands/AppBootstrap';
+import HeroSection       from '../components/islands/HeroSection';
+import ServicesSection   from '../components/islands/ServicesSection';
+import PricingSection    from '../components/islands/PricingSection';
 import TestimonialsSection from '../components/islands/TestimonialsSection';
-import FaqSection from '../components/islands/FaqSection';
-import BookingModal from '../components/booking/BookingModal';
-import WhatsAppFab from '../components/islands/WhatsAppFab';
+import FaqSection        from '../components/islands/FaqSection';
+import ServicePickerModal from '../components/booking/ServicePickerModal';
+import BookingModal      from '../components/booking/BookingModal';
+import WhatsAppFab       from '../components/islands/WhatsAppFab';
+import DevModeBadge      from '../components/islands/DevModeBadge';
 ---
 
 <BaseLayout>
-  <!-- AppBootstrap loads boot data and hydrates the store for all islands -->
+  <!-- Bootstraps store + schedules UTC cache reset -->
   <AppBootstrap client:load />
 
-  <!-- Hero Section (React island - reads from store) -->
-  <HeroSection client:load />
-
-  <!-- Services Section -->
-  <ServicesSection client:visible />
-
-  <!-- Slot Picker (anchored as "Book" target) -->
-  <SlotPickerSection client:visible />
-
-  <!-- Pricing -->
-  <PricingSection client:visible />
-
-  <!-- Testimonials -->
+  <!-- Public sections -->
+  <HeroSection         client:load />
+  <ServicesSection     client:visible />
+  <PricingSection      client:visible />
   <TestimonialsSection client:visible />
+  <FaqSection          client:visible />
 
-  <!-- FAQs -->
-  <FaqSection client:visible />
+  <!--
+    ServicePickerModal — opens when any "Book Now" button is clicked.
+    client:load so it is always ready, even if the user clicks immediately.
+  -->
+  <ServicePickerModal client:load />
 
-  <!-- Booking Modal (global, rendered at root level) -->
+  <!--
+    BookingModal — opens after the user selects a slot in ServicePickerModal.
+    The store orchestrates the open/close transition between the two modals.
+  -->
   <BookingModal client:load />
 
-  <!-- WhatsApp FAB -->
+  <!-- WhatsApp floating button -->
   <WhatsAppFab client:load />
+
+  <!-- Shows a yellow badge when PUBLIC_SKIP_PAYMENT=true — renders nothing in prod -->
+  <DevModeBadge client:load />
 </BaseLayout>

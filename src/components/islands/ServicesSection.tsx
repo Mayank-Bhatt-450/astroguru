@@ -1,9 +1,13 @@
 // src/components/islands/ServicesSection.tsx
+// "Book now →" links now call openServicePicker(serviceId)
+// so the slot picker opens pre-filtered to that specific service.
+
 import { useAppStore, selectServices } from '../../stores/appStore';
 
 export default function ServicesSection() {
-  const bootStatus = useAppStore(s => s.bootStatus);
-  const services   = useAppStore(selectServices).filter(s => s.isActive).sort((a,b) => a.order - b.order);
+  const bootStatus        = useAppStore(s => s.bootStatus);
+  const services          = useAppStore(selectServices).filter(s => s.isActive).sort((a, b) => a.order - b.order);
+  const openServicePicker = useAppStore(s => s.openServicePicker);
 
   return (
     <section className="section" id="services" style={{ background: 'var(--color-fog)' }}>
@@ -28,8 +32,17 @@ export default function ServicesSection() {
         {/* Error */}
         {bootStatus === 'error' && (
           <div className="banner banner-error">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            Could not load services. <button onClick={() => window.location.reload()} style={{ marginLeft: 8, fontWeight: 600, color: 'inherit', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>Retry</button>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            Could not load services.{' '}
+            <button
+              onClick={() => window.location.reload()}
+              style={{ marginLeft: 8, fontWeight: 600, color: 'inherit', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
+            >
+              Retry
+            </button>
           </div>
         )}
 
@@ -56,11 +69,9 @@ export default function ServicesSection() {
               >
                 {/* Icon chip */}
                 <div style={{
-                  width: 52, height: 52,
-                  borderRadius: 14,
+                  width: 52, height: 52, borderRadius: 14, fontSize: 24,
                   background: ['var(--color-lavender-field)','var(--color-mint-wash)','#fce7f3'][i % 3],
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 24,
                 }}>
                   {svc.iconEmoji}
                 </div>
@@ -74,9 +85,18 @@ export default function ServicesSection() {
                   <span className="badge badge-violet" style={{ fontSize: 11 }}>
                     ⏱ {svc.durationMinutes} min
                   </span>
-                  <a href={`#book`} style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-voltage-violet)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  {/* KEY CHANGE: calls openServicePicker with this service's id */}
+                  <button
+                    onClick={() => openServicePicker(svc.id)}
+                    style={{
+                      fontSize: 13, fontWeight: 600, color: 'var(--color-voltage-violet)',
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      padding: 0,
+                    }}
+                  >
                     Book now →
-                  </a>
+                  </button>
                 </div>
               </div>
             ))}

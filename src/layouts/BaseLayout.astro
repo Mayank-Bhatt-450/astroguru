@@ -1,5 +1,6 @@
 ---
 // src/layouts/BaseLayout.astro
+import NavBookButton from '../components/islands/NavBookButton';
 export interface Props {
   title?: string;
   description?: string;
@@ -77,16 +78,14 @@ const canonicalUrl = new URL(Astro.url.pathname, siteUrl).href;
       <!-- Centre links -->
       <ul class="nav-links">
         <li><a href="/#services"     class="nav-link">Services</a></li>
-        <li><a href="/#book"         class="nav-link">Book</a></li>
         <li><a href="/#pricing"      class="nav-link">Pricing</a></li>
         <li><a href="/quick-consult" class="nav-link">Quick Consult</a></li>
         <li><a href="/#testimonials" class="nav-link">Reviews</a></li>
       </ul>
 
-      <!-- Right CTA -->
+      <!-- Right CTA — React island so it can open the service picker modal -->
       <div class="nav-cta">
-        <a href="/#book" class="btn btn-ghost btn-nav" style="display:none" id="navGhost">See Demo</a>
-        <a href="/#book" class="btn btn-primary btn-nav">Book a Session</a>
+        <NavBookButton client:load />
         <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">
           <span></span><span></span><span></span>
         </button>

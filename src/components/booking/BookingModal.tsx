@@ -1,5 +1,15 @@
 // src/components/booking/BookingModal.tsx
-// 5-step booking flow using the Supahub design system
+// ============================================================
+// 5-step booking flow: form → otp → payment → success → birth-details
+//
+// SKIP_PAYMENT flag:
+//   When PUBLIC_SKIP_PAYMENT=true in .env, the payment step is
+//   replaced with a dev-bypass screen. lockSlot() is still called
+//   (so concurrency is tested), but Razorpay is never opened and
+//   confirmBooking() is bypassed. A synthetic ConfirmResult is
+//   created so the success + birth-details steps work normally.
+//   NEVER set this true in production.
+// ============================================================
 
 import { useState, useRef, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
@@ -8,8 +18,9 @@ import { z } from 'zod';
 import { useAppStore, selectConfig } from '../../stores/appStore';
 import { otpService } from '../../services/otp';
 import { initiatePayment } from '../../services/payment';
-import { lockSlot, submitBirthDetails } from '../../lib/api';
+import { lockSlot, submitBirthDetails, releaseSlot } from '../../lib/api';
 import { formatSlotDuration } from '../../lib/slots';
+import { SKIP_PAYMENT } from '../../lib/flags';
 import type { BookingFormData, BirthDetailsData, ConfirmResult } from '../../lib/types';
 
 // ── Schemas ───────────────────────────────────────────────
@@ -28,17 +39,30 @@ const birthSchema = z.object({
 
 // ── Steps bar ─────────────────────────────────────────────
 function StepsBar({ step }: { step: string }) {
-  const order = ['form','otp','payment','success'];
-  const idx   = order.indexOf(step);
+  const steps = SKIP_PAYMENT
+    ? ['form', 'otp', 'payment', 'success']   // still shows 4 steps; payment becomes bypass
+    : ['form', 'otp', 'payment', 'success'];
+  const idx = steps.indexOf(step);
+  const labels = ['Details', 'Verify', 'Payment', 'Confirmed'];
+
   return (
     <div className="steps-bar">
-      {order.map((s, i) => (
-        <div key={s} style={{ display: 'flex', alignItems: 'center', flex: i < order.length - 1 ? 1 : 'none' }}>
-          <div className={`step-node ${i < idx ? 'done' : i === idx ? 'active' : ''}`}>
-            {i < idx ? '✓' : i + 1}
+      {steps.map((s, i) => (
+        <div key={s} style={{ display: 'flex', alignItems: 'center', flex: i < steps.length - 1 ? 1 : 'none' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+            <div className={`step-node ${i < idx ? 'done' : i === idx ? 'active' : ''}`}>
+              {i < idx ? '✓' : i + 1}
+            </div>
+            <span style={{
+              fontSize: 10, fontWeight: 600, letterSpacing: '0.04em',
+              color: i === idx ? 'var(--color-voltage-violet)' : i < idx ? '#10b981' : 'var(--color-slate)',
+              whiteSpace: 'nowrap',
+            }}>
+              {labels[i]}
+            </span>
           </div>
-          {i < order.length - 1 && (
-            <div className={`step-connector ${i < idx ? 'done' : ''}`} />
+          {i < steps.length - 1 && (
+            <div className={`step-connector ${i < idx ? 'done' : ''}`} style={{ marginBottom: 16 }} />
           )}
         </div>
       ))}
@@ -46,7 +70,7 @@ function StepsBar({ step }: { step: string }) {
   );
 }
 
-// ── Slot Summary Banner ───────────────────────────────────
+// ── Slot Summary ──────────────────────────────────────────
 function SlotSummary() {
   const { selectedSlot, selectedService, boot, userTimezone } = useAppStore();
   if (!selectedSlot || !selectedService) return null;
@@ -55,21 +79,26 @@ function SlotSummary() {
   return (
     <div style={{
       background: 'var(--color-lavender-field)', borderRadius: 14,
-      padding: '14px 18px', marginBottom: 24, display: 'flex',
-      justifyContent: 'space-between', alignItems: 'center', gap: 12,
+      padding: '14px 18px', marginBottom: 24,
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
     }}>
       <div>
         <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--color-midnight-ink)', marginBottom: 3 }}>
           {selectedService.iconEmoji} {selectedService.name}
         </div>
         <div style={{ fontSize: 13, color: 'var(--color-slate)' }}>
-          {selectedSlot.startLocal.toLocaleDateString('en-US', { timeZone: userTimezone, weekday: 'short', month: 'short', day: 'numeric' })}
+          {selectedSlot.startLocal.toLocaleDateString('en-US', {
+            timeZone: userTimezone, weekday: 'short', month: 'short', day: 'numeric',
+          })}
           {' '}· {selectedSlot.timeLabel}
           {' '}· {formatSlotDuration(selectedSlot.durationMinutes)}
         </div>
       </div>
       {pricing && (
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, color: 'var(--color-voltage-violet)', whiteSpace: 'nowrap' }}>
+        <div style={{
+          fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600,
+          color: 'var(--color-voltage-violet)', whiteSpace: 'nowrap',
+        }}>
           {pricing.priceDisplay}
         </div>
       )}
@@ -82,10 +111,14 @@ function ContactStep({ onNext }: { onNext: (d: BookingFormData) => void }) {
   const { register, handleSubmit, formState: { errors } } = useForm<BookingFormData>({
     resolver: zodResolver(contactSchema),
   });
+
   return (
     <form onSubmit={handleSubmit(onNext)}>
       <SlotSummary />
-      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, marginBottom: 20 }}>Your Details</h3>
+      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, marginBottom: 20 }}>
+        Your Details
+      </h3>
+
       <div className="form-group mb-16">
         <label className="form-label">Full Name</label>
         <input className={`form-input ${errors.name ? 'error' : ''}`} placeholder="Your full name" {...register('name')} />
@@ -95,23 +128,32 @@ function ContactStep({ onNext }: { onNext: (d: BookingFormData) => void }) {
         <label className="form-label">Email Address</label>
         <input className={`form-input ${errors.email ? 'error' : ''}`} type="email" placeholder="you@example.com" {...register('email')} />
         {errors.email && <p className="form-error">{errors.email.message}</p>}
-        <p className="form-hint">We'll send an OTP to verify your email.</p>
+        <p className="form-hint">We'll send a verification code to this address.</p>
       </div>
       <div className="form-group mb-24">
         <label className="form-label">WhatsApp / Mobile</label>
         <input className={`form-input ${errors.phone ? 'error' : ''}`} type="tel" placeholder="10-digit mobile number" {...register('phone')} />
         {errors.phone && <p className="form-error">{errors.phone.message}</p>}
       </div>
+
       <button type="submit" className="btn btn-primary w-full" style={{ justifyContent: 'center' }}>
         Verify Email & Continue
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+          <path d="M5 12h14M12 5l7 7-7 7"/>
+        </svg>
       </button>
     </form>
   );
 }
 
 // ── Step 2: OTP ───────────────────────────────────────────
-function OtpStep({ email, onVerified, onBack }: { email: string; onVerified: (t: string) => void; onBack: () => void }) {
+function OtpStep({
+  email, onVerified, onBack,
+}: {
+  email: string;
+  onVerified: (token: string) => void;
+  onBack: () => void;
+}) {
   const [digits,   setDigits]   = useState(['','','','','','']);
   const [phase,    setPhase]    = useState<'sending'|'sent'|'verifying'|'error'>('sending');
   const [errMsg,   setErrMsg]   = useState('');
@@ -126,28 +168,34 @@ function OtpStep({ email, onVerified, onBack }: { email: string; onVerified: (t:
   }, [resendIn]);
 
   const sendOtp = async () => {
-    setPhase('sending');
+    setPhase('sending'); setErrMsg('');
     const ok = await otpService.sendOtp(email);
     if (ok) { setPhase('sent'); setResendIn(60); }
     else    { setPhase('error'); setErrMsg('Failed to send OTP. Please try again.'); }
   };
 
   const onChange = (e: React.ChangeEvent<HTMLInputElement>, i: number) => {
-    const val = e.target.value.replace(/\D/g,'').slice(-1);
+    const val = e.target.value.replace(/\D/g, '').slice(-1);
     const next = [...digits]; next[i] = val; setDigits(next);
-    if (val && i < 5) refs.current[i+1]?.focus();
+    if (val && i < 5) refs.current[i + 1]?.focus();
     if (next.every(Boolean)) verify(next.join(''));
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, i: number) => {
-    if (e.key === 'Backspace' && !digits[i] && i > 0) refs.current[i-1]?.focus();
+    if (e.key === 'Backspace' && !digits[i] && i > 0) refs.current[i - 1]?.focus();
   };
 
   const verify = async (code: string) => {
     setPhase('verifying');
     const token = await otpService.confirmOtp(email, code);
-    if (token) { onVerified(token); }
-    else { setPhase('error'); setErrMsg('Incorrect code. Please try again.'); setDigits(['','','','','','']); refs.current[0]?.focus(); }
+    if (token) {
+      onVerified(token);
+    } else {
+      setPhase('error');
+      setErrMsg('Incorrect code. Please try again.');
+      setDigits(['','','','','','']);
+      refs.current[0]?.focus();
+    }
   };
 
   return (
@@ -155,27 +203,50 @@ function OtpStep({ email, onVerified, onBack }: { email: string; onVerified: (t:
       <SlotSummary />
       <div style={{ textAlign: 'center', marginBottom: 28 }}>
         <div style={{ fontSize: 40, marginBottom: 12 }}>📧</div>
-        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, marginBottom: 8 }}>Verify Your Email</h3>
+        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, marginBottom: 8 }}>
+          Verify Your Email
+        </h3>
         <p style={{ fontSize: 14, color: 'var(--color-slate)', lineHeight: 1.6 }}>
-          {phase === 'sending' ? 'Sending code…' : <>Code sent to <strong style={{ color: 'var(--color-midnight-ink)' }}>{email}</strong></>}
+          {phase === 'sending'
+            ? 'Sending code…'
+            : <>Code sent to <strong style={{ color: 'var(--color-midnight-ink)' }}>{email}</strong></>
+          }
         </p>
       </div>
+
       {errMsg && <div className="banner banner-error mb-16">{errMsg}</div>}
+
       <div className="otp-group mb-24">
         {digits.map((d, i) => (
-          <input key={i} ref={el => { refs.current[i] = el; }} className="otp-digit"
+          <input
+            key={i}
+            ref={el => { refs.current[i] = el; }}
+            className="otp-digit"
             type="text" inputMode="numeric" maxLength={1} value={d}
-            onChange={e => onChange(e, i)} onKeyDown={e => onKeyDown(e, i)}
-            disabled={phase === 'verifying'} autoFocus={i === 0} />
+            onChange={e => onChange(e, i)}
+            onKeyDown={e => onKeyDown(e, i)}
+            disabled={phase === 'verifying'}
+            autoFocus={i === 0}
+          />
         ))}
       </div>
-      <button className="btn btn-primary w-full mb-12" style={{ justifyContent: 'center' }}
+
+      <button
+        className="btn btn-primary w-full mb-12"
+        style={{ justifyContent: 'center' }}
         onClick={() => verify(digits.join(''))}
-        disabled={digits.join('').length < 6 || phase === 'verifying'}>
+        disabled={digits.join('').length < 6 || phase === 'verifying'}
+      >
         {phase === 'verifying' ? 'Verifying…' : 'Confirm OTP'}
       </button>
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <button onClick={onBack} style={{ fontSize: 13, color: 'var(--color-slate)', background: 'none', border: 'none', cursor: 'pointer' }}>← Change email</button>
+        <button
+          onClick={onBack}
+          style={{ fontSize: 13, color: 'var(--color-slate)', background: 'none', border: 'none', cursor: 'pointer' }}
+        >
+          ← Change email
+        </button>
         {resendIn > 0
           ? <span style={{ fontSize: 13, color: 'var(--color-slate)' }}>Resend in {resendIn}s</span>
           : <button onClick={sendOtp} style={{ fontSize: 13, color: 'var(--color-voltage-violet)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer' }}>Resend OTP</button>
@@ -185,14 +256,139 @@ function OtpStep({ email, onVerified, onBack }: { email: string; onVerified: (t:
   );
 }
 
-// ── Step 3: Payment ───────────────────────────────────────
-function PaymentStep({ onSuccess, onFailed }: { onSuccess: (r: ConfirmResult) => void; onFailed: (e: string) => void }) {
+// ── Step 3a: Dev Payment Bypass ───────────────────────────
+function DevPaymentBypass({
+  onConfirmed,
+}: {
+  onConfirmed: (result: ConfirmResult) => void;
+}) {
+  const { selectedSlot, selectedService, bookingForm, setLockToken } = useAppStore();
+  const [phase,    setPhase]    = useState<'locking'|'ready'|'error'>('locking');
+  const [errMsg,   setErrMsg]   = useState('');
+  const lockRef = useRef<string | null>(null);
+  const bidRef  = useRef<string>(`dev_bkg_${Date.now()}`);
+
+  useEffect(() => { acquireLock(); }, []);
+
+  const acquireLock = async () => {
+    if (!selectedSlot) return;
+    setPhase('locking');
+    const res = await lockSlot(selectedSlot.id, bidRef.current);
+    if (!res.ok) { setPhase('error'); setErrMsg(res.error); return; }
+    lockRef.current = res.data.lockToken;
+    setLockToken(res.data.lockToken);
+    setPhase('ready');
+  };
+
+  const bypass = async () => {
+    if (!selectedSlot || !lockRef.current) return;
+    // Synthesise a fake ConfirmResult so the success step works normally
+    const fakeResult: ConfirmResult = {
+      bookingId:       bidRef.current,
+      meetLink:        'https://meet.google.com/dev-mode-bypass',
+      calendarEventId: 'dev_cal_event',
+    };
+    onConfirmed(fakeResult);
+  };
+
+  return (
+    <div>
+      <SlotSummary />
+
+      {/* Dev mode banner — very prominent so no one misses it */}
+      <div style={{
+        background: '#fef3c7', border: '2px dashed #f59e0b',
+        borderRadius: 12, padding: '12px 16px', marginBottom: 20,
+        display: 'flex', alignItems: 'flex-start', gap: 10,
+      }}>
+        <span style={{ fontSize: 20, flexShrink: 0 }}>⚠️</span>
+        <div>
+          <p style={{ fontWeight: 700, fontSize: 13, color: '#92400e', marginBottom: 3 }}>
+            DEV MODE — Payment Bypassed
+          </p>
+          <p style={{ fontSize: 12, color: '#92400e', lineHeight: 1.5 }}>
+            <code style={{ background: 'rgba(0,0,0,0.08)', padding: '1px 5px', borderRadius: 3 }}>PUBLIC_SKIP_PAYMENT=true</code>{' '}
+            is set. No real payment is taken. The slot lock is still acquired to test concurrency.
+            Remove this flag before going live.
+          </p>
+        </div>
+      </div>
+
+      {phase === 'locking' && (
+        <div style={{ textAlign: 'center', padding: '20px 0' }}>
+          <div className="skeleton" style={{ width: 40, height: 40, borderRadius: '50%', margin: '0 auto 10px' }} />
+          <p style={{ fontSize: 14, color: 'var(--color-slate)' }}>Acquiring slot lock…</p>
+        </div>
+      )}
+
+      {phase === 'error' && (
+        <div>
+          <div className="banner banner-error mb-16">{errMsg}</div>
+          <button className="btn btn-ghost w-full" style={{ justifyContent: 'center' }} onClick={acquireLock}>
+            Retry
+          </button>
+        </div>
+      )}
+
+      {phase === 'ready' && (
+        <div>
+          <div className="card mb-20" style={{ padding: '16px 20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 14, color: 'var(--color-graphite)' }}>
+                {selectedService?.name}
+              </span>
+              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, color: '#10b981' }}>
+                FREE (dev)
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 13, color: 'var(--color-slate)' }}>Duration</span>
+              <span style={{ fontSize: 13, color: 'var(--color-slate)' }}>
+                {selectedSlot?.durationMinutes} min
+              </span>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 16, padding: '10px 14px', background: '#d1fae5', borderRadius: 10 }}>
+            <p style={{ fontSize: 12, color: '#065f46', fontWeight: 500 }}>
+              ✓ Slot locked successfully ({lockRef.current?.slice(0, 16)}…)
+            </p>
+          </div>
+
+          <button
+            className="btn w-full"
+            style={{
+              justifyContent: 'center', fontSize: 16,
+              background: '#10b981', color: 'white',
+              boxShadow: '0 4px 20px rgba(16,185,129,0.3)',
+            }}
+            onClick={bypass}
+          >
+            ✓ Confirm Booking (Dev Bypass)
+          </button>
+
+          <p style={{ textAlign: 'center', fontSize: 12, color: 'var(--color-slate)', marginTop: 10 }}>
+            Bypassing Razorpay · For development only
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Step 3b: Real Payment ─────────────────────────────────
+function RealPaymentStep({
+  onSuccess, onFailed,
+}: {
+  onSuccess: (r: ConfirmResult) => void;
+  onFailed: (e: string) => void;
+}) {
   const { selectedSlot, selectedService, bookingForm, setLockToken, boot } = useAppStore();
   const config  = useAppStore(selectConfig);
   const pricing = boot?.pricing.find(p => p.serviceId === selectedService?.id);
 
-  const [status,    setStatus]    = useState<'locking'|'ready'|'paying'|'error'>('locking');
-  const [errMsg,    setErrMsg]    = useState('');
+  const [status,  setStatus]  = useState<'locking'|'ready'|'paying'|'error'>('locking');
+  const [errMsg,  setErrMsg]  = useState('');
   const lockRef = useRef<string | null>(null);
   const bidRef  = useRef<string>(`bkg_${Date.now()}`);
 
@@ -224,7 +420,8 @@ function PaymentStep({ onSuccess, onFailed }: { onSuccess: (r: ConfirmResult) =>
       description: `${selectedService.name} — ${selectedSlot.timeLabel}`,
       siteName:    config?.siteName || 'Jyotish Consultations',
     });
-    if (result.status === 'success')   { onSuccess(result.confirm); }
+
+    if (result.status === 'success')    { onSuccess(result.confirm); }
     else if (result.status === 'dismissed') { setStatus('ready'); }
     else { setStatus('error'); setErrMsg(result.error); }
   };
@@ -232,40 +429,54 @@ function PaymentStep({ onSuccess, onFailed }: { onSuccess: (r: ConfirmResult) =>
   return (
     <div>
       <SlotSummary />
-      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, marginBottom: 20 }}>Secure Payment</h3>
+      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, marginBottom: 20 }}>
+        Secure Payment
+      </h3>
+
       {status === 'locking' && (
         <div style={{ textAlign: 'center', padding: '32px 0' }}>
           <div className="skeleton" style={{ width: 48, height: 48, borderRadius: '50%', margin: '0 auto 12px' }} />
           <p style={{ fontSize: 14, color: 'var(--color-slate)' }}>Holding your slot…</p>
         </div>
       )}
+
       {status === 'error' && (
         <div>
           <div className="banner banner-error mb-16">{errMsg}</div>
-          <button className="btn btn-ghost w-full" style={{ justifyContent: 'center' }} onClick={lock}>Try Again</button>
+          <button className="btn btn-ghost w-full" style={{ justifyContent: 'center' }} onClick={lock}>
+            Try Again
+          </button>
         </div>
       )}
+
       {(status === 'ready' || status === 'paying') && pricing && (
         <div>
           <div className="card mb-20" style={{ padding: '16px 20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
               <span style={{ fontSize: 14, color: 'var(--color-graphite)' }}>{selectedService?.name}</span>
-              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600, color: 'var(--color-midnight-ink)' }}>{pricing.priceDisplay}</span>
+              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 600 }}>{pricing.priceDisplay}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ fontSize: 13, color: 'var(--color-slate)' }}>Duration</span>
               <span style={{ fontSize: 13, color: 'var(--color-slate)' }}>{selectedSlot?.durationMinutes} min</span>
             </div>
           </div>
+
           <div style={{ display: 'flex', justifyContent: 'center', gap: 24, marginBottom: 24, flexWrap: 'wrap' }}>
-            {[['🔐','SSL Secured'],['💳','Cards & UPI'],['🔒','No data stored']].map(([icon,label]) => (
+            {[['🔐','SSL Secured'],['💳','Cards & UPI'],['🔒','No data stored']].map(([icon, label]) => (
               <div key={label as string} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                 <span style={{ fontSize: 13 }}>{icon}</span>
                 <span style={{ fontSize: 12, color: 'var(--color-slate)' }}>{label}</span>
               </div>
             ))}
           </div>
-          <button className="btn btn-primary w-full" style={{ justifyContent: 'center', fontSize: 16 }} onClick={pay} disabled={status === 'paying'}>
+
+          <button
+            className="btn btn-primary w-full"
+            style={{ justifyContent: 'center', fontSize: 16 }}
+            onClick={pay}
+            disabled={status === 'paying'}
+          >
             {status === 'paying' ? 'Processing…' : `Pay ${pricing.priceDisplay} Securely`}
           </button>
           <p style={{ textAlign: 'center', fontSize: 12, color: 'var(--color-slate)', marginTop: 12 }}>
@@ -299,8 +510,10 @@ function SuccessStep() {
 
   if (phase === 'done') return (
     <div style={{ textAlign: 'center', padding: '16px 0' }}>
-      <div style={{ fontSize: 48, marginBottom: 16 }}>🙏</div>
-      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, color: 'var(--color-voltage-violet)', marginBottom: 8 }}>All Done!</h3>
+      <div style={{ fontSize: 52, marginBottom: 16 }}>🙏</div>
+      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, color: 'var(--color-voltage-violet)', marginBottom: 8 }}>
+        All Done!
+      </h3>
       <p style={{ fontSize: 15, color: 'var(--color-slate)', lineHeight: 1.7 }}>
         Details saved. Check your email for the Google Meet link and session info.
       </p>
@@ -311,8 +524,12 @@ function SuccessStep() {
     <form onSubmit={handleSubmit(onBirthSubmit)}>
       <div style={{ textAlign: 'center', marginBottom: 24 }}>
         <div style={{ fontSize: 36, marginBottom: 10 }}>🌟</div>
-        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, marginBottom: 6 }}>Your Birth Details</h3>
-        <p style={{ fontSize: 13, color: 'var(--color-slate)' }}>Helps prepare your personalised reading. Strictly private.</p>
+        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, marginBottom: 6 }}>
+          Your Birth Details
+        </h3>
+        <p style={{ fontSize: 13, color: 'var(--color-slate)' }}>
+          Helps prepare your personalised reading. Strictly private.
+        </p>
       </div>
       {errMsg && <div className="banner banner-error mb-16">{errMsg}</div>}
       <div className="form-group mb-14">
@@ -339,18 +556,28 @@ function SuccessStep() {
     </form>
   );
 
+  // Initial success
   return (
     <div style={{ textAlign: 'center' }}>
-      <div style={{ fontSize: 52, marginBottom: 16, animation: 'float 3s ease-in-out infinite', display: 'inline-block' }}>✨</div>
+      <div style={{ fontSize: 52, marginBottom: 16, animation: 'float 3s ease-in-out infinite', display: 'inline-block' }}>
+        ✨
+      </div>
       <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--color-voltage-violet)', marginBottom: 8 }}>
         Booking Confirmed!
       </h3>
+      {SKIP_PAYMENT && (
+        <div style={{ background: '#fef3c7', border: '1px solid #f59e0b', borderRadius: 8, padding: '8px 14px', marginBottom: 16, fontSize: 12, color: '#92400e' }}>
+          ⚠️ Dev mode — no real payment was charged
+        </div>
+      )}
       <p style={{ fontSize: 15, color: 'var(--color-slate)', marginBottom: 20, lineHeight: 1.7 }}>
-        Your session is reserved. A Google Meet link has been emailed to you.
+        Your session is reserved.{!SKIP_PAYMENT && ' A Google Meet link has been emailed to you.'}
       </p>
-      {confirmResult?.meetLink && confirmResult.meetLink.startsWith('http') && (
+      {confirmResult?.meetLink && confirmResult.meetLink.startsWith('http') && !SKIP_PAYMENT && (
         <div className="card mb-20" style={{ padding: '14px 18px' }}>
-          <p style={{ fontSize: 11, color: 'var(--color-slate)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>Your Google Meet Link</p>
+          <p style={{ fontSize: 11, color: 'var(--color-slate)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>
+            Your Google Meet Link
+          </p>
           <a href={confirmResult.meetLink} target="_blank" rel="noopener noreferrer"
             style={{ fontSize: 13, color: 'var(--color-voltage-violet)', wordBreak: 'break-all', fontWeight: 500 }}>
             {confirmResult.meetLink}
@@ -363,7 +590,10 @@ function SuccessStep() {
       <button className="btn btn-primary w-full mb-10" style={{ justifyContent: 'center' }} onClick={() => setPhase('birth')}>
         ✦ Provide Birth Details
       </button>
-      <button style={{ fontSize: 13, color: 'var(--color-slate)', background: 'none', border: 'none', cursor: 'pointer', width: '100%' }} onClick={() => setPhase('done')}>
+      <button
+        style={{ fontSize: 13, color: 'var(--color-slate)', background: 'none', border: 'none', cursor: 'pointer', width: '100%' }}
+        onClick={() => setPhase('done')}
+      >
         I'll do this later via email
       </button>
     </div>
@@ -372,17 +602,45 @@ function SuccessStep() {
 
 // ── Main Modal ────────────────────────────────────────────
 export default function BookingModal() {
-  const { bookingOpen, bookingStep, closeBooking, setBookingStep, setBookingForm, setOtpToken, setConfirmResult, bookingForm } = useAppStore();
+  const {
+    bookingOpen, bookingStep, closeBooking,
+    setBookingStep, setBookingForm, setOtpToken,
+    setConfirmResult, bookingForm, selectedSlot, lockToken,
+  } = useAppStore();
 
-  const handleClose = () => {
+  // Lock body scroll
+  useEffect(() => {
+    if (bookingOpen) document.body.style.overflow = 'hidden';
+    else             document.body.style.overflow = '';
+    return () => { document.body.style.overflow = ''; };
+  }, [bookingOpen]);
+
+  // Keyboard close
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && bookingOpen && bookingStep !== 'success') handleClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [bookingOpen, bookingStep]);
+
+  const handleClose = async () => {
     if (bookingStep === 'success') { closeBooking(); return; }
-    if (window.confirm('Cancel your booking? Your held slot will be released.')) closeBooking();
+    if (!window.confirm('Cancel your booking? Your held slot will be released.')) return;
+    // Release lock if we acquired one
+    if (selectedSlot && lockToken) {
+      await releaseSlot(selectedSlot.id, lockToken);
+    }
+    closeBooking();
   };
 
   if (!bookingOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) handleClose(); }}>
+    <div
+      className="modal-overlay"
+      onClick={e => { if (e.target === e.currentTarget) handleClose(); }}
+    >
       <div className="modal-panel animate-slide-up">
         {bookingStep !== 'success' && (
           <button className="modal-close" onClick={handleClose} aria-label="Close">✕</button>
@@ -392,6 +650,7 @@ export default function BookingModal() {
         {bookingStep === 'form' && (
           <ContactStep onNext={data => { setBookingForm(data); setBookingStep('otp'); }} />
         )}
+
         {bookingStep === 'otp' && bookingForm && (
           <OtpStep
             email={bookingForm.email}
@@ -399,12 +658,16 @@ export default function BookingModal() {
             onBack={() => setBookingStep('form')}
           />
         )}
+
         {bookingStep === 'payment' && (
-          <PaymentStep
-            onSuccess={result => { setConfirmResult(result); setBookingStep('success'); }}
-            onFailed={err => console.error('[Payment]', err)}
-          />
+          SKIP_PAYMENT
+            ? <DevPaymentBypass onConfirmed={result => { setConfirmResult(result); setBookingStep('success'); }} />
+            : <RealPaymentStep
+                onSuccess={result => { setConfirmResult(result); setBookingStep('success'); }}
+                onFailed={err => console.error('[Payment]', err)}
+              />
         )}
+
         {bookingStep === 'success' && <SuccessStep />}
       </div>
     </div>

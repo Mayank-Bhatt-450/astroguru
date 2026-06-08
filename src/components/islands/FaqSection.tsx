@@ -79,9 +79,9 @@ export default function FaqSection() {
           <p style={{ fontSize: 14, color: 'var(--color-slate)', marginBottom: 20 }}>
             I'm happy to answer any queries before you book.
           </p>
-          <a href="#book" className="btn btn-primary" style={{ fontSize: 15 }}>
+          <button className="btn btn-primary" style={{ fontSize: 15, cursor: 'pointer' }} onClick={() => useAppStore.getState().openServicePicker()}>
             Book a Free Intro Call
-          </a>
+          </button>
         </div>
       </div>
     </section>
