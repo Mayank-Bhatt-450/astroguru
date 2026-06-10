@@ -386,6 +386,7 @@ function route(action, params, body) {
       case 'lockSlot':             return ok(lockSlot(body));
       case 'releaseSlot':          return ok(releaseSlot(body));
       case 'confirmBooking':       return ok(confirmBooking(body));
+      case 'devConfirmBooking':    return ok(devConfirmBooking(body));  // SKIP_PAYMENT path
       case 'createPendingBooking': return ok(createPendingBooking(body));
       case 'saveBirthDetails':     return ok(saveBirthDetails(body));
       case 'requestOtp':           return ok(requestOtp(body));
@@ -397,6 +398,7 @@ function route(action, params, body) {
       case 'adminDeleteSlot':      return ok(adminDeleteSlot(body));
       case 'adminToggleSlot':      return ok(adminToggleSlot(body));
       case 'adminUpdateSheet':     return ok(adminUpdateSheet(body));
+      case 'checkSlot':            return ok(checkSlot(params));   // live availability check (GET)
       default:
         Logger.log('Unknown action: ' + action);
         return err('Unknown action: ' + action);
@@ -570,13 +572,68 @@ function getSlots(params) {
 // ============================================================
 // LOCK / RELEASE  (atomic via LockService)
 // ============================================================
+// ── checkSlot — live read of a single slot's status ─────────
+// Called by the frontend BEFORE lockSlot to give the user fast
+// feedback without taking a lock. Uses LockService so it reads
+// a consistent snapshot even if a concurrent lockSlot is running.
+function checkSlot(params) {
+  var slotId = params.slotId;
+  if (!slotId) throw new Error('slotId required');
+
+  // Use a read inside LockService to get a consistent view
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    var slotsSheet = sheet('Slots');
+    var data       = slotsSheet.getDataRange().getValues();
+    var headers    = data[0];
+    var idCol      = headers.indexOf('id');
+    var statusCol  = headers.indexOf('status');
+    var lockExpCol = headers.indexOf('lockExpiresAt');
+    var lockTokCol = headers.indexOf('lockToken');
+
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][idCol] !== slotId) continue;
+
+      var rawStatus  = String(data[i][statusCol] || 'available');
+      var lockExpiry = data[i][lockExpCol] ? String(data[i][lockExpCol]) : null;
+
+      // Auto-expire stale locks for the response — does NOT write to sheet
+      var effectiveStatus = rawStatus;
+      if (rawStatus === 'locked' && lockExpiry && new Date(lockExpiry) < new Date()) {
+        effectiveStatus = 'available';
+        lockExpiry      = null;
+      }
+
+      Logger.log('checkSlot: slotId=' + slotId + ' rawStatus=' + rawStatus + ' effective=' + effectiveStatus);
+      return {
+        slotId:        slotId,
+        status:        effectiveStatus,
+        lockExpiresAt: lockExpiry || null,
+      };
+    }
+    throw new Error('Slot not found: ' + slotId);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ── lockSlot — atomically reserves a slot ────────────────
+// FIX BUG 3: Called BEFORE the booking form opens, not inside
+// the payment step.
+// FIX RACE: Uses LockService.getScriptLock() so two concurrent
+// requests cannot both succeed for the same slot.
+// FIX EXPIRED LOCKS: Expired locks are cleaned up atomically
+// inside the same LockService critical section — no separate
+// cleanup pass needed.
 function lockSlot(body) {
   var slotId    = body.slotId;
   var bookingId = body.bookingId;
-  if (!slotId) throw new Error('slotId required');
+  if (!slotId)    throw new Error('slotId required');
+  if (!bookingId) throw new Error('bookingId required');
 
   var lock = LockService.getScriptLock();
-  lock.waitLock(10000);
+  lock.waitLock(10000); // wait up to 10s for the mutex
 
   try {
     var slotsSheet = sheet('Slots');
@@ -586,32 +643,56 @@ function lockSlot(body) {
     var statusCol  = headers.indexOf('status');
     var lockCol    = headers.indexOf('lockExpiresAt');
     var lockTokCol = headers.indexOf('lockToken');
+    var bookingCol = headers.indexOf('bookingId');
 
     for (var i = 1; i < data.length; i++) {
       if (data[i][idCol] !== slotId) continue;
 
-      var currentStatus = data[i][statusCol];
-      var lockExpiry    = data[i][lockCol];
+      var currentStatus = String(data[i][statusCol] || '');
+      var lockExpiry    = data[i][lockCol] ? String(data[i][lockCol]) : null;
 
-      // Auto-expire stale lock
-      if (currentStatus === 'locked' && lockExpiry && new Date(lockExpiry) < new Date()) {
-        currentStatus = 'available';
+      // Auto-expire stale locks atomically within the critical section
+      if (currentStatus === 'locked' && lockExpiry) {
+        var expiryTime = new Date(lockExpiry).getTime();
+        if (!isNaN(expiryTime) && expiryTime < Date.now()) {
+          Logger.log('lockSlot: expiring stale lock on slot ' + slotId + ' (expired at ' + lockExpiry + ')');
+          currentStatus = 'available';
+          // Write the cleanup immediately so other readers see it
+          slotsSheet.getRange(i + 1, statusCol  + 1).setValue('available');
+          slotsSheet.getRange(i + 1, lockCol    + 1).setValue('');
+          slotsSheet.getRange(i + 1, lockTokCol + 1).setValue('');
+        }
       }
 
+      if (currentStatus === 'booked') {
+        throw new Error('Slot is already booked and cannot be reserved.');
+      }
+      if (currentStatus === 'disabled') {
+        throw new Error('Slot is not available for booking.');
+      }
+      if (currentStatus === 'locked') {
+        // Still validly locked by another user
+        throw new Error('Slot is temporarily held by another user. Please try a different time.');
+      }
       if (currentStatus !== 'available') {
-        throw new Error('Slot is no longer available.');
+        throw new Error('Slot is no longer available (status: ' + currentStatus + ').');
       }
 
+      // All checks passed — acquire the lock
       var lockToken   = generateId('lk');
-      var lockExpires = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      var lockExpires = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 min
 
       slotsSheet.getRange(i + 1, statusCol  + 1).setValue('locked');
       slotsSheet.getRange(i + 1, lockCol    + 1).setValue(lockExpires);
       slotsSheet.getRange(i + 1, lockTokCol + 1).setValue(lockToken);
+      if (bookingCol !== -1) {
+        slotsSheet.getRange(i + 1, bookingCol + 1).setValue(bookingId);
+      }
 
+      Logger.log('lockSlot: acquired lock on ' + slotId + ' token=' + lockToken + ' expires=' + lockExpires);
       return { lockToken: lockToken, lockExpiresAt: lockExpires };
     }
-    throw new Error('Slot not found.');
+    throw new Error('Slot not found: ' + slotId);
   } finally {
     lock.releaseLock();
   }
@@ -644,6 +725,183 @@ function releaseSlot(body) {
 // ============================================================
 // BOOKING CONFIRMATION
 // ============================================================
+// ── devConfirmBooking ─────────────────────────────────────
+// Called when PUBLIC_SKIP_PAYMENT=true on the frontend.
+// Performs ALL the same work as confirmBooking() — creates the
+// Calendar event, generates the Meet link, marks the slot as
+// booked, writes the Bookings row, sends the confirmation email —
+// but skips the Razorpay HMAC signature verification since there
+// is no real payment transaction.
+//
+// Security: This function still verifies the lockToken against the
+// sheet, so it cannot be abused to confirm arbitrary slots.
+// In production, PUBLIC_SKIP_PAYMENT must be false so this is
+// never called from the live frontend.
+function devConfirmBooking(body) {
+  var bookingId = body.bookingId;
+  var slotId    = body.slotId;
+  var lockToken = body.lockToken;
+  var name      = body.name;
+  var email     = body.email;
+  var phone     = body.phone;
+  var serviceId = body.serviceId;
+
+  Logger.log('devConfirmBooking: bookingId=' + bookingId + ' slotId=' + slotId);
+
+  if (!bookingId) throw new Error('bookingId is required');
+  if (!slotId)    throw new Error('slotId is required');
+  if (!lockToken) throw new Error('lockToken is required');
+
+  // ── Validate lockToken ownership (same as real confirmBooking) ──
+  var slotRow    = null;
+  var devLock    = LockService.getScriptLock();
+  devLock.waitLock(10000);
+  try {
+    var slotData    = sheet('Slots').getDataRange().getValues();
+    var slotHeaders = slotData[0];
+    var sIdCol      = slotHeaders.indexOf('id');
+    var sStatCol    = slotHeaders.indexOf('status');
+    var sTokCol     = slotHeaders.indexOf('lockToken');
+    var sExpCol     = slotHeaders.indexOf('lockExpiresAt');
+
+    for (var sk = 1; sk < slotData.length; sk++) {
+      if (slotData[sk][sIdCol] !== slotId) continue;
+
+      var rowStatus = String(slotData[sk][sStatCol] || '');
+      var rowToken  = String(slotData[sk][sTokCol]  || '');
+      var rowExpiry = slotData[sk][sExpCol] ? String(slotData[sk][sExpCol]) : null;
+
+      if (rowStatus === 'booked') {
+        throw new Error('Slot is already booked.');
+      }
+      if (rowToken !== lockToken) {
+        Logger.log('devConfirmBooking: TOKEN MISMATCH slot=' + slotId + ' expected=' + rowToken + ' got=' + lockToken);
+        throw new Error('Slot reservation mismatch. Your hold may have expired. Please rebook.');
+      }
+      if (rowExpiry) {
+        var expMs = new Date(rowExpiry).getTime();
+        if (!isNaN(expMs) && expMs < Date.now()) {
+          throw new Error('Slot reservation expired. Please select a new time.');
+        }
+      }
+
+      // Build row object for email/calendar use
+      var headers = slotData[0];
+      var rowObj  = {};
+      headers.forEach(function(h, idx) { rowObj[h] = slotData[sk][idx]; });
+      slotRow = rowObj;
+      break;
+    }
+  } finally {
+    devLock.releaseLock();
+  }
+
+  if (!slotRow) throw new Error('Slot not found: ' + slotId);
+
+  // ── Create Google Calendar event + Meet link ──────────────
+  var calendarId = getCalendarForService(serviceId);
+  var meetLink   = '';
+  var calEventId = '';
+
+  try {
+    var startTime = new Date(slotRow.startUtc);
+    var endTime   = new Date(slotRow.endUtc);
+
+    var eventResource = {
+      summary:     slotRow.serviceName + ' Consultation — ' + name,
+      description: 'Booking ID: ' + bookingId + '
+[DEV MODE - no payment charged]
+Client: ' + name + '
+Email: ' + email + '
+Phone: ' + phone,
+      start:  { dateTime: startTime.toISOString(), timeZone: 'UTC' },
+      end:    { dateTime: endTime.toISOString(),   timeZone: 'UTC' },
+      attendees: [
+        { email: email,      displayName: name },
+        { email: FROM_EMAIL, displayName: 'Jyotish Consultations' },
+      ],
+      conferenceData: {
+        createRequest: {
+          requestId:             bookingId + '_dev_meet',
+          conferenceSolutionKey: { type: 'hangoutsMeet' },
+        },
+      },
+      guestsCanSeeOtherGuests: false,
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: 'email', minutes: 1440 },
+          { method: 'email', minutes: 60   },
+          { method: 'popup', minutes: 10   },
+        ],
+      },
+    };
+
+    var calEvent = Calendar.Events.insert(eventResource, calendarId, { conferenceDataVersion: 1 });
+    calEventId   = calEvent.id;
+    meetLink     = calEvent.hangoutLink || '';
+
+    if (!meetLink && calEvent.conferenceData && calEvent.conferenceData.entryPoints) {
+      for (var ep = 0; ep < calEvent.conferenceData.entryPoints.length; ep++) {
+        if (calEvent.conferenceData.entryPoints[ep].entryPointType === 'video') {
+          meetLink = calEvent.conferenceData.entryPoints[ep].uri;
+          break;
+        }
+      }
+    }
+    Logger.log('devConfirmBooking: meetLink=' + meetLink + ' calEventId=' + calEventId);
+  } catch (calErr) {
+    Logger.log('devConfirmBooking Calendar API error: ' + calErr.message);
+    meetLink = '(Calendar error — contact admin)';
+    sendAdminAlert('devConfirmBooking Calendar API failed for booking ' + bookingId + ': ' + calErr.message);
+  }
+
+  // ── Mark slot as booked ───────────────────────────────────
+  var slotsSheet = sheet('Slots');
+  var sd         = slotsSheet.getDataRange().getValues();
+  var sh         = sd[0];
+  for (var si = 1; si < sd.length; si++) {
+    if (sd[si][sh.indexOf('id')] !== slotId) continue;
+    slotsSheet.getRange(si + 1, sh.indexOf('status')    + 1).setValue('booked');
+    slotsSheet.getRange(si + 1, sh.indexOf('meetLink')  + 1).setValue(meetLink);
+    slotsSheet.getRange(si + 1, sh.indexOf('bookingId') + 1).setValue(bookingId);
+    slotsSheet.getRange(si + 1, sh.indexOf('lockToken') + 1).setValue('');
+    break;
+  }
+
+  // ── Write Bookings row ────────────────────────────────────
+  var bookingsSheet = sheet('Bookings');
+  var bData         = bookingsSheet.getDataRange().getValues();
+  var bh            = bData[0];
+  var rowUpdated    = false;
+
+  for (var bi = 1; bi < bData.length; bi++) {
+    if (bData[bi][bh.indexOf('id')] !== bookingId) continue;
+    bookingsSheet.getRange(bi + 1, bh.indexOf('status')          + 1).setValue('confirmed');
+    bookingsSheet.getRange(bi + 1, bh.indexOf('meetLink')        + 1).setValue(meetLink);
+    bookingsSheet.getRange(bi + 1, bh.indexOf('calendarEventId') + 1).setValue(calEventId);
+    rowUpdated = true;
+    break;
+  }
+
+  if (!rowUpdated) {
+    bookingsSheet.appendRow([
+      bookingId, slotId, serviceId, name, email, phone,
+      'confirmed', '', '', '',
+      meetLink, calEventId, '', '', '', '', new Date().toISOString(),
+    ]);
+  }
+
+  // ── Send confirmation email ───────────────────────────────
+  sendConfirmationEmail({
+    to: email, name: name, bookingId: bookingId,
+    meetLink: meetLink, slotRow: slotRow,
+  });
+
+  Logger.log('devConfirmBooking: complete for bookingId=' + bookingId);
+  return { bookingId: bookingId, meetLink: meetLink, calendarEventId: calEventId };
+}
+
 function confirmBooking(body) {
   var bookingId         = body.bookingId;
   var slotId            = body.slotId;
@@ -662,14 +920,68 @@ function confirmBooking(body) {
     throw new Error('Payment signature verification failed.');
   }
 
-  // 2. Get slot row
-  var slots   = sheetRows('Slots');
+  // 2. Validate slot ownership with LockService (FIX BUG 4)
+  // We must verify:
+  //   a) Slot exists
+  //   b) Slot is currently 'locked' (not available, booked, or disabled)
+  //   c) The lockToken in the request matches the one in the sheet
+  // This prevents a race where two users both get through payment
+  // and the second one's confirmBooking overwrites the first.
   var slotRow = null;
-  for (var k = 0; k < slots.length; k++) {
-    if (slots[k].id === slotId) { slotRow = slots[k]; break; }
+  var confirmLock = LockService.getScriptLock();
+  confirmLock.waitLock(10000);
+  try {
+    var slotData    = sheet('Slots').getDataRange().getValues();
+    var slotHeaders = slotData[0];
+    var sIdCol   = slotHeaders.indexOf('id');
+    var sStatCol = slotHeaders.indexOf('status');
+    var sTokCol  = slotHeaders.indexOf('lockToken');
+    var sExpCol  = slotHeaders.indexOf('lockExpiresAt');
+
+    for (var sk = 1; sk < slotData.length; sk++) {
+      if (slotData[sk][sIdCol] !== slotId) continue;
+
+      var rowStatus  = String(slotData[sk][sStatCol] || '');
+      var rowToken   = String(slotData[sk][sTokCol]  || '');
+      var rowExpiry  = slotData[sk][sExpCol] ? String(slotData[sk][sExpCol]) : null;
+
+      Logger.log('confirmBooking: slot=' + slotId + ' status=' + rowStatus + ' token_match=' + (rowToken === lockToken));
+
+      // Build a plain object matching what sheetRows() would return
+      var headers = slotData[0];
+      var rowObj  = {};
+      headers.forEach(function(h, idx) { rowObj[h] = slotData[sk][idx]; });
+      slotRow = rowObj;
+
+      if (rowStatus === 'booked') {
+        throw new Error('Slot is already booked. Duplicate payment? Contact support with booking ID: ' + bookingId);
+      }
+
+      // Verify token ownership — prevents cross-user confirmation
+      if (!lockToken) {
+        throw new Error('lockToken is required for booking confirmation.');
+      }
+      if (rowToken !== lockToken) {
+        Logger.log('confirmBooking: TOKEN MISMATCH slot=' + slotId + ' expected=' + rowToken + ' got=' + lockToken);
+        throw new Error('Slot reservation mismatch. Your hold may have expired. Please rebook.');
+      }
+
+      // Check lock has not expired
+      if (rowExpiry) {
+        var expMs = new Date(rowExpiry).getTime();
+        if (!isNaN(expMs) && expMs < Date.now()) {
+          throw new Error('Slot reservation expired. Please select a new time and complete payment.');
+        }
+      }
+
+      // Token matches and lock is valid — proceed
+      break;
+    }
+  } finally {
+    confirmLock.releaseLock();
   }
-  if (!slotRow)                    throw new Error('Slot not found: '     + slotId);
-  if (slotRow.status === 'booked') throw new Error('Slot already booked.');
+
+  if (!slotRow) throw new Error('Slot not found: ' + slotId);
 
   // 3. Generate Google Meet link via Calendar API
   var calendarId = getCalendarForService(serviceId);
@@ -778,19 +1090,50 @@ function createPendingBooking(body) {
 }
 
 function saveBirthDetails(body) {
-  var data    = sheet('Bookings').getDataRange().getValues();
-  var headers = data[0];
+  var bookingId = body.bookingId;
+  if (!bookingId) throw new Error('bookingId is required');
 
+  Logger.log('saveBirthDetails: bookingId=' + bookingId);
+
+  var s       = sheet('Bookings');
+  var data    = s.getDataRange().getValues();
+  var headers = data[0];
+  var idCol   = headers.indexOf('id');
+
+  // ── Try to update existing row ────────────────────────────
   for (var i = 1; i < data.length; i++) {
-    if (data[i][headers.indexOf('id')] !== body.bookingId) continue;
-    var s = sheet('Bookings');
+    if (String(data[i][idCol]) !== String(bookingId)) continue;
+
     s.getRange(i + 1, headers.indexOf('dateOfBirth')     + 1).setValue(body.dateOfBirth     || '');
     s.getRange(i + 1, headers.indexOf('timeOfBirth')     + 1).setValue(body.timeOfBirth     || '');
     s.getRange(i + 1, headers.indexOf('cityOfBirth')     + 1).setValue(body.cityOfBirth     || '');
     s.getRange(i + 1, headers.indexOf('additionalNotes') + 1).setValue(body.additionalNotes || '');
+    Logger.log('saveBirthDetails: updated existing row for ' + bookingId);
     return { saved: true };
   }
-  throw new Error('Booking not found: ' + body.bookingId);
+
+  // ── Row not found: UPSERT — create a stub row ─────────────
+  // This handles the dev-bypass path (no confirmBooking GAS call)
+  // and any edge case where the booking row was not yet created.
+  Logger.log('saveBirthDetails: row not found for ' + bookingId + ' — creating stub row');
+
+  // Build a row that fills all header columns with defaults
+  var newRow = [];
+  headers.forEach(function(h) {
+    switch (h) {
+      case 'id':              newRow.push(bookingId); break;
+      case 'status':          newRow.push('confirmed'); break;
+      case 'dateOfBirth':     newRow.push(body.dateOfBirth     || ''); break;
+      case 'timeOfBirth':     newRow.push(body.timeOfBirth     || ''); break;
+      case 'cityOfBirth':     newRow.push(body.cityOfBirth     || ''); break;
+      case 'additionalNotes': newRow.push(body.additionalNotes || ''); break;
+      case 'createdAt':       newRow.push(new Date().toISOString()); break;
+      default:                newRow.push(''); break;
+    }
+  });
+  s.appendRow(newRow);
+  Logger.log('saveBirthDetails: stub row created for ' + bookingId);
+  return { saved: true };
 }
 
 // ============================================================

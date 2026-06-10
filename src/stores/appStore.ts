@@ -1,6 +1,23 @@
 // src/stores/appStore.ts
 // ============================================================
-// Global Zustand store — shared across all React islands
+// Global Zustand store.
+//
+// BOOKING FLOW (fixed):
+//
+//   1. User clicks a time chip in ServicePickerModal
+//   2. checkSlotAvailability() → live server check (no lock yet)
+//      If not 'available': show inline error, do not open modal
+//   3. lockSlot() → atomically reserve the slot on the server
+//      If lock fails: show error, do not open modal
+//   4. BookingModal opens in 'form' step WITH the lock already held.
+//      lockToken and lockExpiresAt are stored in state.
+//      A countdown timer shows time remaining on the lock.
+//   5. form → otp steps proceed normally
+//   6. Before advancing form→otp: re-validate slot is still 'locked'
+//      and the lockToken matches (catches expiry during form fill)
+//   7. payment step: slot is already locked — payment runs immediately
+//   8. On confirm: server verifies lockToken ownership before writing
+//   9. On close/cancel at any step: releaseSlot() frees the lock
 // ============================================================
 
 import { create } from 'zustand';
@@ -8,21 +25,27 @@ import { subscribeWithSelector } from 'zustand/middleware';
 import type {
   BootPayload, Slot, SlotDisplay, BookingStep,
   BookingFormData, BirthDetailsData, SiteConfig, Service,
+  ConfirmResult,
 } from '../lib/types';
-import type { ConfirmResult } from '../lib/types';
 import { bootCache, slotsCache, scheduleUtcMidnightReset } from '../lib/cache';
-import { fetchBoot, fetchSlots } from '../lib/api';
+import { fetchBoot, fetchSlots, checkSlotAvailability, lockSlot, releaseSlot } from '../lib/api';
 import { detectTimezone, transformSlots, groupSlotsByDay } from '../lib/slots';
 import type { SlotsByDay } from '../lib/slots';
 
+// ── Types ─────────────────────────────────────────────────
+export type SlotCheckStatus =
+  | { phase: 'idle' }
+  | { phase: 'checking' }
+  | { phase: 'locking' }
+  | { phase: 'error'; message: string }; // shown inside the picker
+
 // ── Store Shape ───────────────────────────────────────────
 interface AppState {
-  // Boot data
+  // Boot
   boot:       BootPayload | null;
   bootStatus: 'idle' | 'loading' | 'ready' | 'error';
   bootError:  string | null;
 
-  // User timezone
   userTimezone: string;
 
   // Slots
@@ -32,13 +55,12 @@ interface AppState {
   slotsError:      string | null;
   activeServiceId: string | null;
 
-  // ── SERVICE-PICKER MODAL ─────────────────────────────────
-  // Opened when any "Book Now" button is clicked.
-  // The user picks a slot here, which then opens the booking modal.
+  // Service picker modal
   servicePickerOpen:      boolean;
-  servicePickerServiceId: string | null;   // pre-selected service
+  servicePickerServiceId: string | null;
+  slotCheckStatus:        SlotCheckStatus; // feedback while checking+locking
 
-  // ── BOOKING MODAL ────────────────────────────────────────
+  // Booking modal
   bookingOpen:     boolean;
   bookingStep:     BookingStep;
   selectedSlot:    SlotDisplay | null;
@@ -46,6 +68,7 @@ interface AppState {
   bookingForm:     BookingFormData | null;
   otpToken:        string | null;
   lockToken:       string | null;
+  lockExpiresAt:   string | null;  // ISO UTC — drives the countdown timer
   bookingId:       string | null;
   confirmResult:   ConfirmResult | null;
 
@@ -54,26 +77,32 @@ interface AppState {
   reloadBoot: () => Promise<void>;
 
   // Actions — slots
-  loadSlots: (serviceId: string) => Promise<void>;
+  loadSlots: (serviceId: string, bypassCache?: boolean) => Promise<void>;
 
-  // Actions — service picker modal
-  openServicePicker:  (serviceId?: string) => void;
-  closeServicePicker: () => void;
+  // Actions — service picker
+  openServicePicker:   (serviceId?: string) => void;
+  closeServicePicker:  () => void;
+  /**
+   * Called when a time chip is clicked.
+   * 1. Live-checks slot availability on server (fixes Bug 1+2)
+   * 2. Atomically locks the slot (fixes Bug 3 — lock before form)
+   * 3. Opens BookingModal only if both succeed
+   */
+  selectSlotAndLock:   (slot: SlotDisplay, service: Service) => Promise<void>;
 
   // Actions — booking modal
-  // Called from the slot picker when a time chip is clicked
-  openBooking:      (slot: SlotDisplay, service: Service) => void;
-  closeBooking:     () => void;
-  setBookingStep:   (step: BookingStep) => void;
-  setBookingForm:   (form: BookingFormData) => void;
-  setOtpToken:      (token: string) => void;
-  setLockToken:     (token: string) => void;
-  setBookingId:     (id: string) => void;
-  setConfirmResult: (result: ConfirmResult) => void;
-  setUserTimezone:  (tz: string) => void;
+  openBooking:         (slot: SlotDisplay, service: Service, lockToken: string, lockExpiresAt: string, bookingId: string) => void;
+  closeBooking:        () => Promise<void>;
+  setBookingStep:      (step: BookingStep) => void;
+  setBookingForm:      (form: BookingFormData) => void;
+  setOtpToken:         (token: string) => void;
+  setLockToken:        (token: string) => void;
+  setBookingId:        (id: string) => void;
+  setConfirmResult:    (result: ConfirmResult) => void;
+  setUserTimezone:     (tz: string) => void;
 }
 
-// ── Store Implementation ──────────────────────────────────
+// ── Store ─────────────────────────────────────────────────
 export const useAppStore = create<AppState>()(
   subscribeWithSelector((set, get) => ({
 
@@ -92,6 +121,7 @@ export const useAppStore = create<AppState>()(
 
     servicePickerOpen:      false,
     servicePickerServiceId: null,
+    slotCheckStatus:        { phase: 'idle' },
 
     bookingOpen:     false,
     bookingStep:     'form',
@@ -100,6 +130,7 @@ export const useAppStore = create<AppState>()(
     bookingForm:     null,
     otpToken:        null,
     lockToken:       null,
+    lockExpiresAt:   null,
     bookingId:       null,
     confirmResult:   null,
 
@@ -125,23 +156,34 @@ export const useAppStore = create<AppState>()(
     },
 
     // ── Slots ─────────────────────────────────────────────
-    loadSlots: async (serviceId: string) => {
+    loadSlots: async (serviceId: string, bypassCache = false) => {
       const { userTimezone } = get();
       const today = new Date().toLocaleDateString('en-CA', { timeZone: userTimezone });
 
-      const cached = slotsCache.get(serviceId, today);
-      if (cached) {
-        const displaySlots = transformSlots(cached, userTimezone);
-        set({ slots: displaySlots, slotsByDay: groupSlotsByDay(displaySlots), slotsStatus: 'ready', activeServiceId: serviceId });
-        return;
+      if (!bypassCache) {
+        const cached = slotsCache.get(serviceId, today);
+        if (cached) {
+          const displaySlots = transformSlots(cached, userTimezone);
+          set({
+            slots:           displaySlots,
+            slotsByDay:      groupSlotsByDay(displaySlots),
+            slotsStatus:     'ready',
+            activeServiceId: serviceId,
+          });
+          return;
+        }
       }
 
       set({ slotsStatus: 'loading', slotsError: null });
       const result = await fetchSlots(serviceId, today, 14);
       if (!result.ok) { set({ slotsStatus: 'error', slotsError: result.error }); return; }
 
-      slotsCache.set(serviceId, today, result.data);
-      const displaySlots = transformSlots(result.data, userTimezone);
+      // FIX BUG 6: filter out past slots (slots that started before now)
+      const now = Date.now();
+      const fresh = result.data.filter(s => new Date(s.startUtc).getTime() > now);
+
+      slotsCache.set(serviceId, today, fresh);
+      const displaySlots = transformSlots(fresh, userTimezone);
       set({
         slots:           displaySlots,
         slotsByDay:      groupSlotsByDay(displaySlots),
@@ -151,15 +193,9 @@ export const useAppStore = create<AppState>()(
       });
     },
 
-    // ── Service-picker modal ──────────────────────────────
-    /**
-     * Called by every "Book Now" / "Book a Consultation" button.
-     * serviceId is optional — when passed, that service tab is
-     * pre-selected so the user lands directly on its slots.
-     */
+    // ── Service picker ────────────────────────────────────
     openServicePicker: (serviceId?: string) => {
       const { boot, loadSlots } = get();
-      // Determine which service to pre-select
       const targetId = serviceId
         ?? get().activeServiceId
         ?? boot?.services?.find(s => s.isActive)?.id
@@ -168,42 +204,119 @@ export const useAppStore = create<AppState>()(
       set({
         servicePickerOpen:      true,
         servicePickerServiceId: targetId,
-        // Reset slot state so we always get a fresh load for the target service
-        slotsStatus:     'idle',
-        slotsError:      null,
-        slots:           [],
-        slotsByDay:      new Map(),
+        slotCheckStatus:        { phase: 'idle' },
+        slotsStatus:            'idle',
+        slotsError:             null,
+        slots:                  [],
+        slotsByDay:             new Map(),
       });
 
       if (targetId) loadSlots(targetId);
     },
 
-    closeServicePicker: () => set({ servicePickerOpen: false }),
+    closeServicePicker: () => set({
+      servicePickerOpen: false,
+      slotCheckStatus:   { phase: 'idle' },
+    }),
+
+    // ── FIX BUG 1+2+3: Atomic check-then-lock on chip click ─
+    selectSlotAndLock: async (slot: SlotDisplay, service: Service) => {
+      // Guard: only act on locally-available slots (first filter)
+      if (slot.status !== 'available') {
+        set({ slotCheckStatus: { phase: 'error', message: 'This slot is no longer available. Please choose another time.' } });
+        return;
+      }
+
+      // Step 1 — Live availability check (bust any CDN/client cache)
+      set({ slotCheckStatus: { phase: 'checking' } });
+      const checkResult = await checkSlotAvailability(slot.id);
+
+      if (!checkResult.ok) {
+        // Network error — still attempt the lock; lockSlot will reject if unavailable
+        console.warn('[selectSlotAndLock] checkSlot failed, proceeding to lock:', checkResult.error);
+      } else {
+        const { status, lockExpiresAt } = checkResult.data;
+
+        if (status === 'booked') {
+          // Refresh slot list so the UI reflects reality
+          get().loadSlots(service.id, true);
+          set({ slotCheckStatus: { phase: 'error', message: 'This slot has just been booked by someone else. Please choose another time.' } });
+          return;
+        }
+
+        if (status === 'locked') {
+          // Check if the lock has already expired server-side
+          const expired = lockExpiresAt && new Date(lockExpiresAt).getTime() < Date.now();
+          if (!expired) {
+            get().loadSlots(service.id, true);
+            set({ slotCheckStatus: { phase: 'error', message: 'This slot is temporarily held by another user. Please wait a moment or choose another time.' } });
+            return;
+          }
+          // Expired lock — proceed; lockSlot will clean it up
+        }
+
+        if (status === 'disabled') {
+          get().loadSlots(service.id, true);
+          set({ slotCheckStatus: { phase: 'error', message: 'This slot is not currently available for booking.' } });
+          return;
+        }
+      }
+
+      // Step 2 — Atomically lock the slot before showing the form
+      set({ slotCheckStatus: { phase: 'locking' } });
+      const bookingId = `bkg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const lockResult = await lockSlot(slot.id, bookingId);
+
+      if (!lockResult.ok) {
+        // Lock failed — slot was grabbed by a concurrent user
+        get().loadSlots(service.id, true);
+        set({
+          slotCheckStatus: {
+            phase: 'error',
+            message: lockResult.error?.includes('no longer available')
+              ? 'This slot was just taken. Please choose another time.'
+              : `Could not reserve slot: ${lockResult.error}`,
+          },
+        });
+        return;
+      }
+
+      // Step 3 — Lock acquired. Open BookingModal with the lock token.
+      set({ slotCheckStatus: { phase: 'idle' } });
+      get().openBooking(slot, service, lockResult.data.lockToken, lockResult.data.lockExpiresAt, bookingId);
+    },
 
     // ── Booking modal ─────────────────────────────────────
-    /**
-     * Called from the slot-picker modal when a time chip is clicked.
-     * Closes the service picker and opens the booking form.
-     */
-    openBooking: (slot, service) => set({
-      servicePickerOpen: false,      // close the slot picker
+    openBooking: (slot, service, lockToken, lockExpiresAt, bookingId) => set({
+      servicePickerOpen: false,
       bookingOpen:       true,
       bookingStep:       'form',
       selectedSlot:      slot,
       selectedService:   service,
       bookingForm:       null,
       otpToken:          null,
-      lockToken:         null,
-      bookingId:         null,
+      lockToken,
+      lockExpiresAt,
+      bookingId,          // the ID used in lockSlot — consistent throughout the flow
       confirmResult:     null,
     }),
 
-    closeBooking: () => set({
-      bookingOpen:     false,
-      bookingStep:     'form',
-      selectedSlot:    null,
-      selectedService: null,
-    }),
+    closeBooking: async () => {
+      const { selectedSlot, lockToken, bookingStep } = get();
+      // Release the server-side lock unless booking is already confirmed
+      if (selectedSlot && lockToken && bookingStep !== 'success') {
+        await releaseSlot(selectedSlot.id, lockToken);
+        slotsCache.invalidateAll();
+      }
+      set({
+        bookingOpen:     false,
+        bookingStep:     'form',
+        selectedSlot:    null,
+        selectedService: null,
+        lockToken:       null,
+        lockExpiresAt:   null,
+      });
+    },
 
     setBookingStep:   (step)   => set({ bookingStep: step }),
     setBookingForm:   (form)   => set({ bookingForm: form }),
@@ -220,7 +333,7 @@ export const useAppStore = create<AppState>()(
   }))
 );
 
-// ── Convenience selectors ─────────────────────────────────
+// ── Selectors ─────────────────────────────────────────────
 export const selectBoot         = (s: AppState) => s.boot;
 export const selectConfig       = (s: AppState) => s.boot?.config ?? null;
 export const selectServices     = (s: AppState) => s.boot?.services ?? [];

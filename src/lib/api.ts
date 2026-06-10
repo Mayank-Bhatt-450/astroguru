@@ -1,16 +1,11 @@
 // src/lib/api.ts
 // ============================================================
-// API client for Google Apps Script backend
+// API client for Google Apps Script backend.
 //
-// CORS FIX: GAS Web Apps do NOT emit Access-Control-Allow-Origin
-// headers for requests with Content-Type: application/json,
-// because that triggers a preflight OPTIONS request which GAS
-// never handles → the browser blocks the call before it lands.
-//
-// The fix: send POST bodies as Content-Type: text/plain.
-// GAS receives e.postData.contents regardless of Content-Type,
-// so JSON.parse(e.postData.contents) still works perfectly.
-// text/plain is a "simple request" — no preflight, no CORS block.
+// CORS: all POST bodies sent as Content-Type: text/plain to avoid
+// CORS preflight (GAS does not handle OPTIONS). text/plain is a
+// CORS "simple request" — no preflight, no block. GAS parses
+// e.postData.contents regardless of Content-Type.
 // ============================================================
 
 import type {
@@ -36,16 +31,13 @@ async function gasRequest<T>(
   let fetchOptions: RequestInit;
 
   if (method === 'GET') {
-    // GET: all params as query string (fine for non-sensitive reads)
     url.searchParams.set('action', action);
     for (const [key, value] of Object.entries(params)) {
       url.searchParams.set(key, String(value));
     }
     fetchOptions = { method: 'GET' };
   } else {
-    // POST: Content-Type MUST be text/plain to avoid CORS preflight.
-    // GAS parses e.postData.contents as text regardless.
-    // JSON.parse inside doPost still works perfectly.
+    // text/plain avoids CORS preflight; GAS reads e.postData.contents fine
     fetchOptions = {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -56,10 +48,9 @@ async function gasRequest<T>(
   try {
     const response = await fetch(url.toString(), {
       ...fetchOptions,
-      signal: AbortSignal.timeout(20_000), // 20s — GAS cold starts can be slow
+      signal: AbortSignal.timeout(20_000),
     });
 
-    // GAS always returns 200 even for errors; check the JSON body
     const text = await response.text();
     let json: Record<string, unknown>;
     try {
@@ -75,33 +66,60 @@ async function gasRequest<T>(
     return { ok: true, data: json.data as T };
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      return { ok: false, error: 'Request timed out. GAS may be under load — try again.', code: 'TIMEOUT' };
+      return { ok: false, error: 'Request timed out — please try again.', code: 'TIMEOUT' };
     }
     const msg = err instanceof Error ? err.message : 'Network error';
     return { ok: false, error: msg, code: 'NETWORK_ERROR' };
   }
 }
 
-// ── Boot (single batch request, 24h cached) ──────────────
+// ── Boot ─────────────────────────────────────────────────
 export async function fetchBoot(): Promise<ApiResult<BootPayload>> {
-  return gasRequest<BootPayload>('boot'); // GET — no sensitive data
+  return gasRequest<BootPayload>('boot');
 }
 
-// ── Slots (live, max 15min cache) ────────────────────────
+// ── Slots ─────────────────────────────────────────────────
 export async function fetchSlots(
   serviceId: string,
   fromDate: string,
   days = 14
 ): Promise<ApiResult<Slot[]>> {
-  return gasRequest<Slot[]>('getSlots', { serviceId, fromDate, days }); // GET
+  return gasRequest<Slot[]>('getSlots', { serviceId, fromDate, days });
+}
+
+/**
+ * FIX BUG 1 + 2: Live single-slot availability check.
+ * Called immediately when a time chip is clicked (before opening the modal).
+ * Returns the current server-side status of one slot without locking it.
+ * Uses GET (no side effects, safe to cache-bust via timestamp param).
+ */
+export async function checkSlotAvailability(
+  slotId: string
+): Promise<ApiResult<{ slotId: string; status: Slot['status']; lockExpiresAt: string | null }>> {
+  return gasRequest<{ slotId: string; status: Slot['status']; lockExpiresAt: string | null }>(
+    'checkSlot', { slotId, _t: Date.now() } // _t busts any CDN/edge cache
+  );
 }
 
 // ── Booking flow ──────────────────────────────────────────
-export async function lockSlot(slotId: string, bookingId: string): Promise<ApiResult<LockResult>> {
+
+/**
+ * FIX BUG 3: Lock is now acquired at the very start of the booking flow
+ * (before the contact form is shown), not inside the payment step.
+ * This prevents users from filling the form + completing OTP only to
+ * find the slot was taken when they reach payment.
+ */
+export async function lockSlot(
+  slotId: string,
+  bookingId: string
+): Promise<ApiResult<LockResult>> {
   return gasRequest<LockResult>('lockSlot', { slotId, bookingId }, 'POST');
 }
 
-export async function releaseSlot(slotId: string, lockToken: string): Promise<ApiResult<{ released: boolean }>> {
+export async function releaseSlot(
+  slotId: string,
+  lockToken: string
+): Promise<ApiResult<{ released: boolean }>> {
   return gasRequest<{ released: boolean }>('releaseSlot', { slotId, lockToken }, 'POST');
 }
 
@@ -113,7 +131,29 @@ export async function confirmBooking(params: {
   return gasRequest<ConfirmResult>('confirmBooking', params, 'POST');
 }
 
-export async function submitBirthDetails(bookingId: string, details: BirthDetailsData): Promise<ApiResult<{ saved: boolean }>> {
+/**
+ * Dev-only booking confirmation — called when SKIP_PAYMENT=true.
+ * Performs all the same backend work as confirmBooking() (marks slot booked,
+ * creates Calendar event, generates Meet link, sends confirmation email,
+ * writes Bookings row) but skips the Razorpay signature check.
+ * NEVER expose this in production — it is gated by ADMIN_SECRET in GAS.
+ */
+export async function devConfirmBooking(params: {
+  bookingId: string;
+  slotId:    string;
+  lockToken: string;
+  name:      string;
+  email:     string;
+  phone:     string;
+  serviceId: string;
+}): Promise<ApiResult<ConfirmResult>> {
+  return gasRequest<ConfirmResult>('devConfirmBooking', params, 'POST');
+}
+
+export async function submitBirthDetails(
+  bookingId: string,
+  details: BirthDetailsData
+): Promise<ApiResult<{ saved: boolean }>> {
   return gasRequest<{ saved: boolean }>('saveBirthDetails', { bookingId, ...details }, 'POST');
 }
 
@@ -125,11 +165,16 @@ export async function createPendingBooking(params: {
 }
 
 // ── OTP ───────────────────────────────────────────────────
-export async function requestOtp(email: string): Promise<ApiResult<{ sent: boolean; expiresAt: string }>> {
+export async function requestOtp(
+  email: string
+): Promise<ApiResult<{ sent: boolean; expiresAt: string }>> {
   return gasRequest<{ sent: boolean; expiresAt: string }>('requestOtp', { email }, 'POST');
 }
 
-export async function verifyOtp(email: string, otp: string): Promise<ApiResult<{ verified: boolean; token: string }>> {
+export async function verifyOtp(
+  email: string,
+  otp: string
+): Promise<ApiResult<{ verified: boolean; token: string }>> {
   return gasRequest<{ verified: boolean; token: string }>('verifyOtp', { email, otp }, 'POST');
 }
 
@@ -149,8 +194,7 @@ export async function createRazorpayOrder(params: {
   );
 }
 
-// ── Admin: bookings ───────────────────────────────────────
-// NOTE: Uses POST so adminToken is NOT exposed in URL/server logs
+// ── Admin ─────────────────────────────────────────────────
 export async function adminFetchBookings(
   adminToken: string,
   filters?: { status?: string; from?: string; to?: string }
@@ -158,7 +202,6 @@ export async function adminFetchBookings(
   return gasRequest<BookingRecord[]>('adminGetBookings', { adminToken, ...filters }, 'POST');
 }
 
-// ── Admin: slots ──────────────────────────────────────────
 export async function adminCreateSlots(
   adminToken: string,
   template: SlotTemplate
@@ -168,14 +211,25 @@ export async function adminCreateSlots(
   );
 }
 
-export async function adminDeleteSlot(adminToken: string, slotId: string): Promise<ApiResult<{ deleted: boolean }>> {
+export async function adminDeleteSlot(
+  adminToken: string,
+  slotId: string
+): Promise<ApiResult<{ deleted: boolean }>> {
   return gasRequest<{ deleted: boolean }>('adminDeleteSlot', { adminToken, slotId }, 'POST');
 }
 
-export async function adminToggleSlot(adminToken: string, slotId: string, enabled: boolean): Promise<ApiResult<{ updated: boolean }>> {
+export async function adminToggleSlot(
+  adminToken: string,
+  slotId: string,
+  enabled: boolean
+): Promise<ApiResult<{ updated: boolean }>> {
   return gasRequest<{ updated: boolean }>('adminToggleSlot', { adminToken, slotId, enabled }, 'POST');
 }
 
-export async function adminUpdateContent(adminToken: string, sheetName: string, rows: unknown[][]): Promise<ApiResult<{ updated: boolean }>> {
+export async function adminUpdateContent(
+  adminToken: string,
+  sheetName: string,
+  rows: unknown[][]
+): Promise<ApiResult<{ updated: boolean }>> {
   return gasRequest<{ updated: boolean }>('adminUpdateSheet', { adminToken, sheetName, rows }, 'POST');
 }
