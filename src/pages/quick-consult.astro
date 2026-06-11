@@ -1,7 +1,6 @@
 ---
 // src/pages/quick-consult.astro
 import BaseLayout from '../layouts/BaseLayout.astro';
-import AppBootstrap from '../components/islands/AppBootstrap';
 import QuickConsultForm from '../components/islands/QuickConsultForm';
 ---
 
@@ -9,8 +8,6 @@ import QuickConsultForm from '../components/islands/QuickConsultForm';
   title="Quick Consultation – Get Answers via Email"
   description="Ask up to 3 astrology, numerology, or vastu questions and receive personalised answers via email within 24 hours."
 >
-  <AppBootstrap client:load />
-
   <div class="section">
     <div class="container" style="max-width: 640px;">
       <div class="text-center mb-5">

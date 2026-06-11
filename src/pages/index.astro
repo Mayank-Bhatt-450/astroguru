@@ -1,7 +1,6 @@
 ---
 // src/pages/index.astro
 import BaseLayout from '../layouts/BaseLayout.astro';
-import AppBootstrap      from '../components/islands/AppBootstrap';
 import HeroSection       from '../components/islands/HeroSection';
 import ServicesSection   from '../components/islands/ServicesSection';
 import PricingSection    from '../components/islands/PricingSection';
@@ -9,14 +8,9 @@ import TestimonialsSection from '../components/islands/TestimonialsSection';
 import FaqSection        from '../components/islands/FaqSection';
 import ServicePickerModal from '../components/booking/ServicePickerModal';
 import BookingModal      from '../components/booking/BookingModal';
-import WhatsAppFab       from '../components/islands/WhatsAppFab';
-import DevModeBadge      from '../components/islands/DevModeBadge';
 ---
 
 <BaseLayout>
-  <!-- Bootstraps store + schedules UTC cache reset -->
-  <AppBootstrap client:load />
-
   <!-- Public sections -->
   <HeroSection         client:load />
   <ServicesSection     client:visible />
@@ -35,10 +29,4 @@ import DevModeBadge      from '../components/islands/DevModeBadge';
     The store orchestrates the open/close transition between the two modals.
   -->
   <BookingModal client:load />
-
-  <!-- WhatsApp floating button -->
-  <WhatsAppFab client:load />
-
-  <!-- Shows a yellow badge when PUBLIC_SKIP_PAYMENT=true — renders nothing in prod -->
-  <DevModeBadge client:load />
 </BaseLayout>

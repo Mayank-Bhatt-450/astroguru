@@ -1,6 +1,9 @@
 ---
 // src/layouts/BaseLayout.astro
 import NavBookButton from '../components/islands/NavBookButton';
+import WhatsAppFab   from '../components/islands/WhatsAppFab';
+import DevModeBadge  from '../components/islands/DevModeBadge';
+import AppBootstrap  from '../components/islands/AppBootstrap';
 export interface Props {
   title?: string;
   description?: string;
@@ -193,5 +196,9 @@ const canonicalUrl = new URL(Astro.url.pathname, siteUrl).href;
   }
 </style>
 
+  <!-- Mounted here so every page gets them — islands self-bootstrap if needed -->
+  <AppBootstrap  client:load />
+  <WhatsAppFab   client:load />
+  <DevModeBadge  client:load />
 </body>
 </html>

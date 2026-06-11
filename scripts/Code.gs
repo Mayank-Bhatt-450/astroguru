@@ -398,6 +398,9 @@ function route(action, params, body) {
       case 'adminDeleteSlot':      return ok(adminDeleteSlot(body));
       case 'adminToggleSlot':      return ok(adminToggleSlot(body));
       case 'adminUpdateSheet':     return ok(adminUpdateSheet(body));
+      case 'adminCancelBooking':   return ok(adminCancelBooking(body));
+      case 'adminRescheduleBooking': return ok(adminRescheduleBooking(body));
+      case 'adminGetBookingBySlot': return ok(adminGetBookingBySlot(body));
       case 'checkSlot':            return ok(checkSlot(params));   // live availability check (GET)
       default:
         Logger.log('Unknown action: ' + action);
@@ -809,11 +812,7 @@ function devConfirmBooking(body) {
 
     var eventResource = {
       summary:     slotRow.serviceName + ' Consultation — ' + name,
-      description: 'Booking ID: ' + bookingId + '
-[DEV MODE - no payment charged]
-Client: ' + name + '
-Email: ' + email + '
-Phone: ' + phone,
+      description: 'Booking ID: ' + bookingId + '\n[DEV MODE - no payment charged]\nClient: ' + name + '\nEmail: ' + email + '\nPhone: ' + phone,
       start:  { dateTime: startTime.toISOString(), timeZone: 'UTC' },
       end:    { dateTime: endTime.toISOString(),   timeZone: 'UTC' },
       attendees: [
@@ -1452,6 +1451,342 @@ function sendAdminAlert(message) {
   if (adminEmail) {
     GmailApp.sendEmail(adminEmail, '[Jyotish Admin]', message, { name: 'Jyotish Bot' });
   }
+}
+
+// ============================================================
+// ADMIN — CANCEL & RESCHEDULE BOOKINGS
+// ============================================================
+
+/**
+ * Get the booking record associated with a specific slotId.
+ * Used by the admin slot manager to find the booking before cancel/reschedule.
+ */
+function adminGetBookingBySlot(body) {
+  if (!verifyAdmin(body.adminToken)) throw new Error('Unauthorized');
+  var slotId = body.slotId;
+  if (!slotId) throw new Error('slotId required');
+
+  var rows = sheetRows('Bookings');
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].slotId) === String(slotId) && rows[i].status === 'confirmed') {
+      return rows[i];
+    }
+  }
+  return null; // slot exists but may not have a confirmed booking yet
+}
+
+/**
+ * Cancel a confirmed booking:
+ *  1. Update Bookings row: status = 'cancelled'
+ *  2. Free the Slot: status = 'available', clear bookingId/meetLink/lockToken
+ *  3. Delete the Google Calendar event (if calendarEventId is stored)
+ *  4. Send cancellation email to the client
+ *  5. Notify admin
+ */
+function adminCancelBooking(body) {
+  if (!verifyAdmin(body.adminToken)) throw new Error('Unauthorized');
+  var bookingId = body.bookingId;
+  var reason    = body.reason || 'Cancelled by admin';
+  if (!bookingId) throw new Error('bookingId required');
+
+  Logger.log('adminCancelBooking: bookingId=' + bookingId + ' reason=' + reason);
+
+  // ── Find booking row ──────────────────────────────────────
+  var bookingsSheet = sheet('Bookings');
+  var bData         = bookingsSheet.getDataRange().getValues();
+  var bHeaders      = bData[0];
+  var bookingRow    = null;
+  var bookingRowIdx = -1;
+
+  for (var bi = 1; bi < bData.length; bi++) {
+    if (String(bData[bi][bHeaders.indexOf('id')]) === String(bookingId)) {
+      bookingRow    = {};
+      bHeaders.forEach(function(h, idx) { bookingRow[h] = bData[bi][idx]; });
+      bookingRowIdx = bi;
+      break;
+    }
+  }
+  if (!bookingRow) throw new Error('Booking not found: ' + bookingId);
+  if (bookingRow.status === 'cancelled') throw new Error('Booking is already cancelled.');
+
+  // ── Update booking status ─────────────────────────────────
+  bookingsSheet.getRange(bookingRowIdx + 1, bHeaders.indexOf('status') + 1).setValue('cancelled');
+  Logger.log('adminCancelBooking: marked booking as cancelled');
+
+  // ── Free the slot ─────────────────────────────────────────
+  var slotId     = String(bookingRow.slotId || '');
+  var calEventId = String(bookingRow.calendarEventId || '');
+
+  if (slotId) {
+    var slotsSheet = sheet('Slots');
+    var sData      = slotsSheet.getDataRange().getValues();
+    var sHeaders   = sData[0];
+    for (var si = 1; si < sData.length; si++) {
+      if (String(sData[si][sHeaders.indexOf('id')]) === slotId) {
+        slotsSheet.getRange(si + 1, sHeaders.indexOf('status')    + 1).setValue('available');
+        slotsSheet.getRange(si + 1, sHeaders.indexOf('bookingId') + 1).setValue('');
+        slotsSheet.getRange(si + 1, sHeaders.indexOf('meetLink')  + 1).setValue('');
+        slotsSheet.getRange(si + 1, sHeaders.indexOf('lockToken') + 1).setValue('');
+        Logger.log('adminCancelBooking: slot ' + slotId + ' freed');
+        break;
+      }
+    }
+  }
+
+  // ── Delete Google Calendar event ──────────────────────────
+  if (calEventId && calEventId !== '') {
+    try {
+      var calId = getCalendarForService(String(bookingRow.serviceId || ''));
+      Calendar.Events.remove(calId, calEventId, { sendUpdates: 'all' });
+      Logger.log('adminCancelBooking: calendar event ' + calEventId + ' deleted, invites sent');
+    } catch (calErr) {
+      Logger.log('adminCancelBooking: calendar delete failed (non-fatal): ' + calErr.message);
+    }
+  }
+
+  // ── Send cancellation email ───────────────────────────────
+  try {
+    var tz       = getConfig().timezone || 'Asia/Kolkata';
+    var slotRows = sheetRows('Slots');
+    var slotRow  = null;
+    for (var sk = 0; sk < slotRows.length; sk++) {
+      if (String(slotRows[sk].id) === slotId) { slotRow = slotRows[sk]; break; }
+    }
+    var timeStr = slotRow
+      ? Utilities.formatDate(new Date(slotRow.startUtc), tz, "EEEE, d MMMM yyyy 'at' HH:mm")
+      : 'your scheduled time';
+
+    var html = '<div style="font-family:Georgia,serif;max-width:560px;margin:auto;padding:32px;background:#07111f;color:#c8d8e8;border-radius:12px;">'
+      + '<h2 style="color:#ef4444;">Booking Cancelled</h2>'
+      + '<p>Dear ' + (bookingRow.name || 'Client') + ',</p>'
+      + '<p>Your <strong>' + (bookingRow.serviceId || 'consultation') + '</strong> booking scheduled for <strong>' + timeStr + '</strong> has been cancelled.</p>'
+      + (reason ? '<p><strong>Reason:</strong> ' + reason + '</p>' : '')
+      + '<p>If you believe this is an error or would like to reschedule, please contact us.</p>'
+      + '<p style="font-size:0.85rem;opacity:0.6;margin-top:24px;">Booking ID: ' + bookingId + '</p>'
+      + '</div>';
+
+    GmailApp.sendEmail(
+      bookingRow.email,
+      'Booking Cancelled — ' + (bookingRow.serviceId || 'Consultation'),
+      'Your booking has been cancelled. Reason: ' + reason,
+      { htmlBody: html, name: 'Jyotish Consultations' }
+    );
+    Logger.log('adminCancelBooking: cancellation email sent to ' + bookingRow.email);
+  } catch (emailErr) {
+    Logger.log('adminCancelBooking: email failed (non-fatal): ' + emailErr.message);
+  }
+
+  // ── Notify admin ──────────────────────────────────────────
+  sendAdminAlert('Booking cancelled: ' + bookingId + ' | Client: ' + bookingRow.name + ' | Reason: ' + reason);
+
+  return { cancelled: true, bookingId: bookingId };
+}
+
+/**
+ * Reschedule a confirmed booking to a different (available) slot:
+ *  1. Validate new slot is available
+ *  2. Lock new slot
+ *  3. Free old slot (available)
+ *  4. Update Bookings row: slotId = newSlotId
+ *  5. Delete old Calendar event
+ *  6. Create new Calendar event on new slot + new Meet link
+ *  7. Update meetLink in Bookings row
+ *  8. Send rescheduling confirmation email to client
+ *  9. Notify admin
+ */
+function adminRescheduleBooking(body) {
+  if (!verifyAdmin(body.adminToken)) throw new Error('Unauthorized');
+  var bookingId  = body.bookingId;
+  var newSlotId  = body.newSlotId;
+  var reason     = body.reason || 'Rescheduled by admin';
+  if (!bookingId) throw new Error('bookingId required');
+  if (!newSlotId) throw new Error('newSlotId required');
+
+  Logger.log('adminRescheduleBooking: bookingId=' + bookingId + ' newSlotId=' + newSlotId);
+
+  // ── Find booking ──────────────────────────────────────────
+  var bookingsSheet = sheet('Bookings');
+  var bData         = bookingsSheet.getDataRange().getValues();
+  var bHeaders      = bData[0];
+  var bookingRow    = null;
+  var bookingRowIdx = -1;
+
+  for (var bi = 1; bi < bData.length; bi++) {
+    if (String(bData[bi][bHeaders.indexOf('id')]) === String(bookingId)) {
+      bookingRow    = {};
+      bHeaders.forEach(function(h, idx) { bookingRow[h] = bData[bi][idx]; });
+      bookingRowIdx = bi;
+      break;
+    }
+  }
+  if (!bookingRow)                     throw new Error('Booking not found: ' + bookingId);
+  if (bookingRow.status === 'cancelled') throw new Error('Cannot reschedule a cancelled booking.');
+
+  // ── Validate + lock new slot (inside LockService) ─────────
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  var newSlotRow    = null;
+  var newSlotRowIdx = -1;
+
+  try {
+    var slotsSheet = sheet('Slots');
+    var sData      = slotsSheet.getDataRange().getValues();
+    var sHeaders   = sData[0];
+
+    // Validate new slot
+    for (var si = 1; si < sData.length; si++) {
+      if (String(sData[si][sHeaders.indexOf('id')]) === newSlotId) {
+        var newStatus = String(sData[si][sHeaders.indexOf('status')] || '');
+        if (newStatus !== 'available') {
+          throw new Error('New slot is not available (status: ' + newStatus + ').');
+        }
+        newSlotRow    = {};
+        sHeaders.forEach(function(h, idx) { newSlotRow[h] = sData[si][idx]; });
+        newSlotRowIdx = si;
+        break;
+      }
+    }
+    if (!newSlotRow) throw new Error('New slot not found: ' + newSlotId);
+
+    // Lock new slot immediately (admin reschedule bypasses the 15-min client lock)
+    slotsSheet.getRange(newSlotRowIdx + 1, sHeaders.indexOf('status')    + 1).setValue('booked');
+    slotsSheet.getRange(newSlotRowIdx + 1, sHeaders.indexOf('bookingId') + 1).setValue(bookingId);
+
+    // Free old slot
+    var oldSlotId = String(bookingRow.slotId || '');
+    if (oldSlotId && oldSlotId !== newSlotId) {
+      for (var oi = 1; oi < sData.length; oi++) {
+        if (String(sData[oi][sHeaders.indexOf('id')]) === oldSlotId) {
+          slotsSheet.getRange(oi + 1, sHeaders.indexOf('status')    + 1).setValue('available');
+          slotsSheet.getRange(oi + 1, sHeaders.indexOf('bookingId') + 1).setValue('');
+          slotsSheet.getRange(oi + 1, sHeaders.indexOf('meetLink')  + 1).setValue('');
+          Logger.log('adminRescheduleBooking: old slot ' + oldSlotId + ' freed');
+          break;
+        }
+      }
+    }
+  } finally {
+    lock.releaseLock();
+  }
+
+  // ── Delete old Calendar event ─────────────────────────────
+  var oldCalEventId = String(bookingRow.calendarEventId || '');
+  var calId         = getCalendarForService(String(bookingRow.serviceId || ''));
+
+  if (oldCalEventId) {
+    try {
+      Calendar.Events.remove(calId, oldCalEventId, { sendUpdates: 'none' });
+      Logger.log('adminRescheduleBooking: old calendar event ' + oldCalEventId + ' deleted');
+    } catch (delErr) {
+      Logger.log('adminRescheduleBooking: old event delete failed (non-fatal): ' + delErr.message);
+    }
+  }
+
+  // ── Create new Calendar event + Meet link ─────────────────
+  var newMeetLink   = '';
+  var newCalEventId = '';
+
+  try {
+    var startTime = new Date(newSlotRow.startUtc);
+    var endTime   = new Date(newSlotRow.endUtc);
+    var newEventResource = {
+      summary:     (newSlotRow.serviceName || bookingRow.serviceId) + ' Consultation — ' + bookingRow.name,
+      description: 'Booking ID: ' + bookingId + ' (Rescheduled)\nClient: ' + bookingRow.name + '\nEmail: ' + bookingRow.email,
+      start:  { dateTime: startTime.toISOString(), timeZone: 'UTC' },
+      end:    { dateTime: endTime.toISOString(),   timeZone: 'UTC' },
+      attendees: [
+        { email: bookingRow.email,  displayName: bookingRow.name },
+        { email: FROM_EMAIL,        displayName: 'Jyotish Consultations' },
+      ],
+      conferenceData: {
+        createRequest: {
+          requestId:             bookingId + '_reschedule_' + Date.now(),
+          conferenceSolutionKey: { type: 'hangoutsMeet' },
+        },
+      },
+      guestsCanSeeOtherGuests: false,
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: 'email', minutes: 1440 },
+          { method: 'email', minutes: 60 },
+          { method: 'popup', minutes: 10 },
+        ],
+      },
+    };
+    var newCalEvent = Calendar.Events.insert(newEventResource, calId, { conferenceDataVersion: 1 });
+    newCalEventId   = newCalEvent.id;
+    newMeetLink     = newCalEvent.hangoutLink || '';
+    if (!newMeetLink && newCalEvent.conferenceData && newCalEvent.conferenceData.entryPoints) {
+      for (var ep = 0; ep < newCalEvent.conferenceData.entryPoints.length; ep++) {
+        if (newCalEvent.conferenceData.entryPoints[ep].entryPointType === 'video') {
+          newMeetLink = newCalEvent.conferenceData.entryPoints[ep].uri;
+          break;
+        }
+      }
+    }
+    // Update new slot with meetLink
+    var slotsSheet2 = sheet('Slots');
+    var sData2      = slotsSheet2.getDataRange().getValues();
+    var sH2         = sData2[0];
+    for (var su = 1; su < sData2.length; su++) {
+      if (String(sData2[su][sH2.indexOf('id')]) === newSlotId) {
+        slotsSheet2.getRange(su + 1, sH2.indexOf('meetLink') + 1).setValue(newMeetLink);
+        break;
+      }
+    }
+    Logger.log('adminRescheduleBooking: new meetLink=' + newMeetLink);
+  } catch (calErr) {
+    Logger.log('adminRescheduleBooking: Calendar API failed (non-fatal): ' + calErr.message);
+    newMeetLink = '(Calendar error — contact admin)';
+  }
+
+  // ── Update Bookings row ───────────────────────────────────
+  bookingsSheet.getRange(bookingRowIdx + 1, bHeaders.indexOf('slotId')          + 1).setValue(newSlotId);
+  bookingsSheet.getRange(bookingRowIdx + 1, bHeaders.indexOf('meetLink')         + 1).setValue(newMeetLink);
+  bookingsSheet.getRange(bookingRowIdx + 1, bHeaders.indexOf('calendarEventId')  + 1).setValue(newCalEventId);
+
+  // ── Send rescheduling email ───────────────────────────────
+  try {
+    var tz2      = getConfig().timezone || 'Asia/Kolkata';
+    var newTime  = Utilities.formatDate(new Date(newSlotRow.startUtc), tz2, "EEEE, d MMMM yyyy 'at' HH:mm");
+    var html2    = '<div style="font-family:Georgia,serif;max-width:560px;margin:auto;padding:32px;background:#07111f;color:#c8d8e8;border-radius:12px;">'
+      + '<h2 style="color:#ffc107;">📅 Booking Rescheduled</h2>'
+      + '<p>Dear ' + bookingRow.name + ',</p>'
+      + '<p>Your consultation has been rescheduled. Your new details:</p>'
+      + '<table style="width:100%;border-collapse:collapse;margin:20px 0;">'
+      + '<tr><td style="padding:8px;opacity:0.6;">New Date & Time</td><td style="padding:8px;color:#e8f0f8;">' + newTime + ' (' + tz2 + ')</td></tr>'
+      + '<tr><td style="padding:8px;opacity:0.6;">Duration</td><td style="padding:8px;color:#e8f0f8;">' + (newSlotRow.durationMinutes || 60) + ' minutes</td></tr>'
+      + '<tr><td style="padding:8px;opacity:0.6;">Booking ID</td><td style="padding:8px;color:#e8f0f8;font-size:0.85rem;">' + bookingId + '</td></tr>'
+      + (reason ? '<tr><td style="padding:8px;opacity:0.6;">Reason</td><td style="padding:8px;color:#e8f0f8;">' + reason + '</td></tr>' : '')
+      + '</table>'
+      + (newMeetLink && newMeetLink.indexOf('http') === 0
+          ? '<div style="text-align:center;margin:28px 0;"><a href="' + newMeetLink + '" style="background:#f9a825;color:#030712;padding:14px 32px;border-radius:100px;text-decoration:none;font-weight:700;display:inline-block;">▶ Join New Google Meet</a></div>'
+          : '')
+      + '<p style="font-size:0.85rem;opacity:0.6;">A new Google Calendar invite has been sent. The previous invite has been removed.</p>'
+      + '</div>';
+
+    GmailApp.sendEmail(
+      bookingRow.email,
+      'Booking Rescheduled — ' + (newSlotRow.serviceName || bookingRow.serviceId),
+      'Your booking has been rescheduled to ' + newTime + '. New Meet: ' + newMeetLink,
+      { htmlBody: html2, name: 'Jyotish Consultations' }
+    );
+    Logger.log('adminRescheduleBooking: rescheduling email sent to ' + bookingRow.email);
+  } catch (emailErr) {
+    Logger.log('adminRescheduleBooking: email failed (non-fatal): ' + emailErr.message);
+  }
+
+  sendAdminAlert('Booking rescheduled: ' + bookingId + ' → new slot: ' + newSlotId + ' | Client: ' + bookingRow.name);
+
+  return {
+    rescheduled:      true,
+    bookingId:        bookingId,
+    newSlotId:        newSlotId,
+    newMeetLink:      newMeetLink,
+    newCalendarEventId: newCalEventId,
+  };
 }
 
 // ============================================================

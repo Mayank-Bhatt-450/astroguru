@@ -1,13 +1,12 @@
 // src/components/admin/AdminContentManager.tsx
-// FIXES:
-// 1. Token fetched at runtime inside save handlers
-// 2. Unauthorized clears token
-// 3. Shows full API error message
+// Pre-fills every editor from bootCache on mount.
+// Testimonials and Pricing tabs remain sheet-only (by design).
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { bootCache } from '../../lib/cache';
 import { adminUpdateContent } from '../../lib/api';
+import type { BootPayload } from '../../lib/types';
 
 function getAdminToken(): string {
   if (typeof window === 'undefined') return '';
@@ -32,6 +31,14 @@ export default function AdminContentManager() {
   const [active,  setActive]  = useState<Section>('hero');
   const [saving,  setSaving]  = useState(false);
   const [result,  setResult]  = useState<{ ok: boolean; msg: string } | null>(null);
+  // Pre-loaded boot data — passed down to editors
+  const [bootData, setBootData] = useState<BootPayload | null>(null);
+
+  // Load existing data from cache on mount
+  useEffect(() => {
+    const cached = bootCache.get();
+    if (cached) setBootData(cached);
+  }, []);
 
   const save = async (sheetName: string, rows: unknown[][]) => {
     const token = getAdminToken();
@@ -55,34 +62,39 @@ export default function AdminContentManager() {
   };
 
   return (
-    <div style={{ display:'grid', gridTemplateColumns:'200px 1fr', gap:24, alignItems:'start' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: 24, alignItems: 'start' }}>
 
       {/* Section nav */}
-      <div style={{ background:'white', border:'1px solid var(--color-mist)', borderRadius:16, padding:10 }}>
+      <div style={{ background: 'white', border: '1px solid var(--color-mist)', borderRadius: 16, padding: 10 }}>
         {SECTIONS.map(s => (
           <button
             key={s.id}
             className={`admin-nav-item ${active === s.id ? 'active' : ''}`}
-            style={{ width:'100%', textAlign:'left' }}
+            style={{ width: '100%', textAlign: 'left' }}
             onClick={() => { setActive(s.id); setResult(null); }}
           >
-            <span style={{ fontSize:14 }}>{s.icon}</span> {s.label}
+            <span style={{ fontSize: 14 }}>{s.icon}</span> {s.label}
           </button>
         ))}
       </div>
 
       {/* Editor pane */}
       <div>
+        {!bootData && (
+          <div className="banner banner-info mb-20" style={{ marginBottom: 16 }}>
+            ℹ No cached data found. Open the site in another tab first to populate the cache, then return here.
+          </div>
+        )}
         {result && (
           <div className={`banner ${result.ok ? 'banner-success' : 'banner-error'} mb-20`}>
             {result.msg}
           </div>
         )}
 
-        {active === 'hero'         && <HeroEditor       onSave={save} saving={saving} />}
-        {active === 'about'        && <AboutEditor      onSave={save} saving={saving} />}
-        {active === 'faqs'         && <FaqEditor        onSave={save} saving={saving} />}
-        {active === 'quickconsult' && <QuickConsultEditor onSave={save} saving={saving} />}
+        {active === 'hero'         && <HeroEditor       onSave={save} saving={saving} boot={bootData} />}
+        {active === 'about'        && <AboutEditor      onSave={save} saving={saving} boot={bootData} />}
+        {active === 'faqs'         && <FaqEditor        onSave={save} saving={saving} boot={bootData} />}
+        {active === 'quickconsult' && <QuickConsultEditor onSave={save} saving={saving} boot={bootData} />}
         {active === 'testimonials' && <TestimonialsNote />}
         {active === 'pricing'      && <PricingNote />}
       </div>
@@ -90,14 +102,14 @@ export default function AdminContentManager() {
   );
 }
 
-// ── Shared editor props ────────────────────────────────────
+// ── Shared types ───────────────────────────────────────────
 type SaveFn = (sheetName: string, rows: unknown[][]) => void;
-interface EP { onSave: SaveFn; saving: boolean; }
+interface EP { onSave: SaveFn; saving: boolean; boot: BootPayload | null; }
 
 function SaveButton({ saving, label = 'Save' }: { saving: boolean; label?: string }) {
   return (
-    <div style={{ marginTop:24, paddingTop:20, borderTop:'1px solid var(--color-mist)' }}>
-      <button type="submit" className="btn btn-primary" style={{ padding:'10px 28px' }} disabled={saving}>
+    <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--color-mist)' }}>
+      <button type="submit" className="btn btn-primary" style={{ padding: '10px 28px' }} disabled={saving}>
         {saving ? 'Saving…' : label}
       </button>
     </div>
@@ -105,19 +117,42 @@ function SaveButton({ saving, label = 'Save' }: { saving: boolean; label?: strin
 }
 
 // ── Hero editor ────────────────────────────────────────────
-function HeroEditor({ onSave, saving }: EP) {
-  const { register, handleSubmit } = useForm({
-    defaultValues: { headline: '', subheadline: '', ctaText: '', ctaSubText: '' }
+function HeroEditor({ onSave, saving, boot }: EP) {
+  const hero = boot?.content?.hero as Record<string, string> | undefined;
+  const { register, handleSubmit, reset } = useForm({
+    defaultValues: {
+      headline:    '',
+      subheadline: '',
+      ctaText:     '',
+      ctaSubText:  '',
+    },
   });
+
+  // Pre-fill when boot data arrives
+  useEffect(() => {
+    if (hero) {
+      reset({
+        headline:    hero.headline    || '',
+        subheadline: hero.subheadline || '',
+        ctaText:     hero.ctaText     || '',
+        ctaSubText:  hero.ctaSubText  || '',
+      });
+    }
+  }, [hero, reset]);
+
   const submit = (d: Record<string, string>) => onSave('Content_Hero', [
     ['headline',    d.headline],
     ['subheadline', d.subheadline],
     ['ctaText',     d.ctaText],
     ['ctaSubText',  d.ctaSubText],
   ]);
+
   return (
-    <form onSubmit={handleSubmit(submit)} style={{ background:'white', border:'1px solid var(--color-mist)', borderRadius:20, padding:28 }}>
-      <h4 style={{ fontFamily:'var(--font-display)', fontSize:18, fontWeight:600, marginBottom:20 }}>Hero Section</h4>
+    <form onSubmit={handleSubmit(submit)}
+      style={{ background: 'white', border: '1px solid var(--color-mist)', borderRadius: 20, padding: 28 }}>
+      <h4 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, marginBottom: 20 }}>
+        Hero Section
+      </h4>
       <div className="form-group mb-16">
         <label className="form-label">Headline</label>
         <input className="form-input" placeholder="Unlock the Secrets of Your Stars" {...register('headline')} />
@@ -127,7 +162,7 @@ function HeroEditor({ onSave, saving }: EP) {
         <label className="form-label">Sub-headline</label>
         <textarea className="form-input" rows={3} placeholder="Book a private 1-on-1 consultation…" {...register('subheadline')} />
       </div>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div className="form-group">
           <label className="form-label">CTA Button Text</label>
           <input className="form-input" placeholder="Book a Consultation" {...register('ctaText')} />
@@ -143,10 +178,28 @@ function HeroEditor({ onSave, saving }: EP) {
 }
 
 // ── About editor ───────────────────────────────────────────
-function AboutEditor({ onSave, saving }: EP) {
-  const { register, handleSubmit } = useForm({
-    defaultValues: { title: '', body: '', yearsExperience: '', clientsServed: '', credentials: '' }
+function AboutEditor({ onSave, saving, boot }: EP) {
+  const about = boot?.content?.about as Record<string, unknown> | undefined;
+  const { register, handleSubmit, reset } = useForm({
+    defaultValues: {
+      title: '', body: '', yearsExperience: '', clientsServed: '', credentials: '',
+    },
   });
+
+  useEffect(() => {
+    if (about) {
+      reset({
+        title:           (about.title           as string) || '',
+        body:            (about.body            as string) || '',
+        yearsExperience: String(about.yearsExperience || ''),
+        clientsServed:   String(about.clientsServed   || ''),
+        credentials:     Array.isArray(about.credentials)
+          ? (about.credentials as string[]).join(', ')
+          : (about.credentials as string) || '',
+      });
+    }
+  }, [about, reset]);
+
   const submit = (d: Record<string, string>) => onSave('Content_About', [
     ['title',           d.title],
     ['body',            d.body],
@@ -154,18 +207,22 @@ function AboutEditor({ onSave, saving }: EP) {
     ['clientsServed',   d.clientsServed],
     ['credentials',     d.credentials],
   ]);
+
   return (
-    <form onSubmit={handleSubmit(submit)} style={{ background:'white', border:'1px solid var(--color-mist)', borderRadius:20, padding:28 }}>
-      <h4 style={{ fontFamily:'var(--font-display)', fontSize:18, fontWeight:600, marginBottom:20 }}>About Section</h4>
+    <form onSubmit={handleSubmit(submit)}
+      style={{ background: 'white', border: '1px solid var(--color-mist)', borderRadius: 20, padding: 28 }}>
+      <h4 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, marginBottom: 20 }}>
+        About Section
+      </h4>
       <div className="form-group mb-16">
         <label className="form-label">Section Title</label>
         <input className="form-input" placeholder="About the Practitioner" {...register('title')} />
       </div>
       <div className="form-group mb-16">
         <label className="form-label">Body Text</label>
-        <textarea className="form-input" rows={6} placeholder="Your bio…" {...register('body')} />
+        <textarea className="form-input" rows={6} {...register('body')} />
       </div>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
         <div className="form-group">
           <label className="form-label">Years Experience</label>
           <input type="number" className="form-input" placeholder="10" {...register('yearsExperience')} />
@@ -185,29 +242,41 @@ function AboutEditor({ onSave, saving }: EP) {
 }
 
 // ── FAQ editor ─────────────────────────────────────────────
-function FaqEditor({ onSave, saving }: EP) {
-  const [faqs, setFaqs] = useState([{ q: '', a: '' }]);
-  const update = (i: number, field: 'q'|'a', val: string) => {
+function FaqEditor({ onSave, saving, boot }: EP) {
+  const bootFaqs = boot?.faqs ?? [];
+  const [faqs, setFaqs] = useState<{ q: string; a: string }[]>([{ q: '', a: '' }]);
+
+  // Pre-fill from cache
+  useEffect(() => {
+    if (bootFaqs.length > 0) {
+      setFaqs(bootFaqs.map(f => ({ q: f.question, a: f.answer })));
+    }
+  }, [bootFaqs.length]);
+
+  const update = (i: number, field: 'q' | 'a', val: string) => {
     const n = [...faqs]; n[i] = { ...n[i], [field]: val }; setFaqs(n);
   };
   const submit = () => onSave('FAQs', faqs.map((f, i) => [i + 1, f.q, f.a]));
+
   return (
-    <div style={{ background:'white', border:'1px solid var(--color-mist)', borderRadius:20, padding:28 }}>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
-        <h4 style={{ fontFamily:'var(--font-display)', fontSize:18, fontWeight:600 }}>FAQs</h4>
-        <button type="button" className="btn btn-ghost" style={{ padding:'6px 14px', fontSize:13 }}
+    <div style={{ background: 'white', border: '1px solid var(--color-mist)', borderRadius: 20, padding: 28 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <h4 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600 }}>FAQs</h4>
+        <button type="button" className="btn btn-ghost" style={{ padding: '6px 14px', fontSize: 13 }}
           onClick={() => setFaqs([...faqs, { q: '', a: '' }])}>
           + Add FAQ
         </button>
       </div>
-      <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {faqs.map((f, i) => (
-          <div key={i} style={{ padding:16, background:'var(--color-fog)', borderRadius:12, border:'1px solid var(--color-mist)' }}>
-            <div style={{ display:'flex', justifyContent:'space-between', marginBottom:10 }}>
-              <span style={{ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em', color:'var(--color-slate)' }}>FAQ #{i + 1}</span>
+          <div key={i} style={{ padding: 16, background: 'var(--color-fog)', borderRadius: 12, border: '1px solid var(--color-mist)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-slate)' }}>
+                FAQ #{i + 1}
+              </span>
               {faqs.length > 1 && (
-                <button type="button" onClick={() => setFaqs(faqs.filter((_,j) => j !== i))}
-                  style={{ fontSize:12, color:'#ef4444', background:'none', border:'none', cursor:'pointer', fontWeight:600 }}>
+                <button type="button" onClick={() => setFaqs(faqs.filter((_, j) => j !== i))}
+                  style={{ fontSize: 12, color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
                   Remove
                 </button>
               )}
@@ -223,8 +292,8 @@ function FaqEditor({ onSave, saving }: EP) {
           </div>
         ))}
       </div>
-      <div style={{ marginTop:24, paddingTop:20, borderTop:'1px solid var(--color-mist)' }}>
-        <button type="button" className="btn btn-primary" style={{ padding:'10px 28px' }} disabled={saving} onClick={submit}>
+      <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--color-mist)' }}>
+        <button type="button" className="btn btn-primary" style={{ padding: '10px 28px' }} disabled={saving} onClick={submit}>
           {saving ? 'Saving…' : 'Save FAQs'}
         </button>
       </div>
@@ -233,10 +302,28 @@ function FaqEditor({ onSave, saving }: EP) {
 }
 
 // ── Quick Consult editor ───────────────────────────────────
-function QuickConsultEditor({ onSave, saving }: EP) {
-  const { register, handleSubmit } = useForm({
-    defaultValues: { title: '', description: '', maxQuestions: '3', turnaroundHours: '24', price: '', priceDisplay: '' }
+function QuickConsultEditor({ onSave, saving, boot }: EP) {
+  const qc = boot?.content?.quickConsult as Record<string, unknown> | undefined;
+  const { register, handleSubmit, reset } = useForm({
+    defaultValues: {
+      title: '', description: '', maxQuestions: '3',
+      turnaroundHours: '24', price: '', priceDisplay: '',
+    },
   });
+
+  useEffect(() => {
+    if (qc) {
+      reset({
+        title:           (qc.title           as string) || '',
+        description:     (qc.description     as string) || '',
+        maxQuestions:    String(qc.maxQuestions    || '3'),
+        turnaroundHours: String(qc.turnaroundHours || '24'),
+        price:           String(qc.price           || ''),
+        priceDisplay:    (qc.priceDisplay    as string) || '',
+      });
+    }
+  }, [qc, reset]);
+
   const submit = (d: Record<string, string>) => onSave('Content_QuickConsult', [
     ['title',           d.title],
     ['description',     d.description],
@@ -245,9 +332,13 @@ function QuickConsultEditor({ onSave, saving }: EP) {
     ['price',           d.price],
     ['priceDisplay',    d.priceDisplay],
   ]);
+
   return (
-    <form onSubmit={handleSubmit(submit)} style={{ background:'white', border:'1px solid var(--color-mist)', borderRadius:20, padding:28 }}>
-      <h4 style={{ fontFamily:'var(--font-display)', fontSize:18, fontWeight:600, marginBottom:20 }}>Quick Consult</h4>
+    <form onSubmit={handleSubmit(submit)}
+      style={{ background: 'white', border: '1px solid var(--color-mist)', borderRadius: 20, padding: 28 }}>
+      <h4 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, marginBottom: 20 }}>
+        Quick Consult
+      </h4>
       <div className="form-group mb-16">
         <label className="form-label">Title</label>
         <input className="form-input" placeholder="Quick Consultation" {...register('title')} />
@@ -256,7 +347,7 @@ function QuickConsultEditor({ onSave, saving }: EP) {
         <label className="form-label">Description</label>
         <textarea className="form-input" rows={3} {...register('description')} />
       </div>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:12, marginBottom:16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 12, marginBottom: 16 }}>
         <div className="form-group">
           <label className="form-label">Max Questions</label>
           <input type="number" min="1" max="5" className="form-input" {...register('maxQuestions')} />
@@ -266,7 +357,7 @@ function QuickConsultEditor({ onSave, saving }: EP) {
           <input type="number" min="1" className="form-input" {...register('turnaroundHours')} />
         </div>
       </div>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 12 }}>
         <div className="form-group">
           <label className="form-label">Price (paise, e.g. 49900)</label>
           <input type="number" className="form-input" placeholder="49900" {...register('price')} />
@@ -283,16 +374,18 @@ function QuickConsultEditor({ onSave, saving }: EP) {
 
 function TestimonialsNote() {
   return (
-    <div style={{ background:'white', border:'1px solid var(--color-mist)', borderRadius:20, padding:28 }}>
-      <h4 style={{ fontFamily:'var(--font-display)', fontSize:18, fontWeight:600, marginBottom:16 }}>Testimonials</h4>
+    <div style={{ background: 'white', border: '1px solid var(--color-mist)', borderRadius: 20, padding: 28 }}>
+      <h4 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Testimonials</h4>
       <div className="banner banner-info mb-16">
-        Testimonials are managed directly in the <strong>Testimonials</strong> sheet in Google Sheets for easiest bulk editing.
+        Testimonials are managed directly in the <strong>Testimonials</strong> sheet in Google Sheets.
       </div>
-      <p style={{ fontSize:14, color:'var(--color-slate)', lineHeight:1.7 }}>
-        Columns: <code style={{ background:'var(--color-fog)', padding:'1px 6px', borderRadius:4 }}>id | name | city | service | rating | body | avatarInitials | createdAt</code>
+      <p style={{ fontSize: 14, color: 'var(--color-slate)', lineHeight: 1.7 }}>
+        Columns: <code style={{ background: 'var(--color-fog)', padding: '1px 6px', borderRadius: 4 }}>
+          id | name | city | service | rating | body | avatarInitials | createdAt
+        </code>
       </p>
-      <p style={{ fontSize:14, color:'var(--color-slate)', marginTop:10 }}>
-        After editing the sheet, click <strong>Clear Cache</strong> in the top bar to see changes live.
+      <p style={{ fontSize: 14, color: 'var(--color-slate)', marginTop: 10 }}>
+        After editing, click <strong>Clear Cache</strong> in the top bar to apply changes.
       </p>
     </div>
   );
@@ -300,20 +393,20 @@ function TestimonialsNote() {
 
 function PricingNote() {
   return (
-    <div style={{ background:'white', border:'1px solid var(--color-mist)', borderRadius:20, padding:28 }}>
-      <h4 style={{ fontFamily:'var(--font-display)', fontSize:18, fontWeight:600, marginBottom:16 }}>Pricing Tiers</h4>
+    <div style={{ background: 'white', border: '1px solid var(--color-mist)', borderRadius: 20, padding: 28 }}>
+      <h4 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Pricing Tiers</h4>
       <div className="banner banner-info mb-16">
-        Pricing tiers are managed directly in the <strong>Pricing</strong> sheet for complex multi-row editing.
+        Pricing tiers are managed directly in the <strong>Pricing</strong> sheet.
       </div>
-      <p style={{ fontSize:14, color:'var(--color-slate)', lineHeight:1.7 }}>
-        Columns: <code style={{ background:'var(--color-fog)', padding:'1px 6px', borderRadius:4 }}>id | serviceId | label | price | priceDisplay | isPopular | features | ctaText</code>
+      <p style={{ fontSize: 14, color: 'var(--color-slate)', lineHeight: 1.7 }}>
+        Columns: <code style={{ background: 'var(--color-fog)', padding: '1px 6px', borderRadius: 4 }}>
+          id | serviceId | label | price | priceDisplay | isPopular | features | ctaText
+        </code>
       </p>
-      <p style={{ fontSize:14, color:'var(--color-slate)', marginTop:10 }}>
-        The <code style={{ background:'var(--color-fog)', padding:'1px 6px', borderRadius:4 }}>features</code> column must be a JSON array string, e.g.{' '}
-        <code style={{ background:'var(--color-fog)', padding:'1px 6px', borderRadius:4 }}>["Feature 1","Feature 2"]</code>
-      </p>
-      <p style={{ fontSize:14, color:'var(--color-slate)', marginTop:10 }}>
-        Prices are in the smallest currency unit (paise for INR): ₹1,500 = <code style={{ background:'var(--color-fog)', padding:'1px 6px', borderRadius:4 }}>150000</code>
+      <p style={{ fontSize: 14, color: 'var(--color-slate)', marginTop: 10 }}>
+        The <code style={{ background: 'var(--color-fog)', padding: '1px 6px', borderRadius: 4 }}>features</code> column
+        must be a JSON array string, e.g.{' '}
+        <code style={{ background: 'var(--color-fog)', padding: '1px 6px', borderRadius: 4 }}>["Feature 1","Feature 2"]</code>
       </p>
     </div>
   );

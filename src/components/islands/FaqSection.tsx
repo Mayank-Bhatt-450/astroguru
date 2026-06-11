@@ -70,19 +70,6 @@ export default function FaqSection() {
             ))}
           </div>
         )}
-
-        {/* Bottom CTA */}
-        <div style={{ marginTop: 48, padding: 28, background: 'var(--color-lavender-field)', borderRadius: 20, textAlign: 'center' }}>
-          <p style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, marginBottom: 8 }}>
-            Still have questions?
-          </p>
-          <p style={{ fontSize: 14, color: 'var(--color-slate)', marginBottom: 20 }}>
-            I'm happy to answer any queries before you book.
-          </p>
-          <button className="btn btn-primary" style={{ fontSize: 15, cursor: 'pointer' }} onClick={() => useAppStore.getState().openServicePicker()}>
-            Book a Free Intro Call
-          </button>
-        </div>
       </div>
     </section>
   );

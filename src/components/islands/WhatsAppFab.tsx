@@ -1,9 +1,24 @@
 // src/components/islands/WhatsAppFab.tsx
+// Mounted in BaseLayout so it appears on EVERY page.
+// Shows on any page that has AppBootstrap loaded (all public pages).
+// Falls back gracefully while boot data is loading.
+
+import { useEffect, useState } from 'react';
 import { useAppStore, selectConfig } from '../../stores/appStore';
 
 export default function WhatsAppFab() {
-  const config = useAppStore(selectConfig);
-  const wa     = config?.whatsapp;
+  const bootStatus = useAppStore(s => s.bootStatus);
+  const config     = useAppStore(selectConfig);
+  const loadBoot   = useAppStore(s => s.loadBoot);
+
+  // Trigger boot load if this island is on a page that didn't include AppBootstrap
+  useEffect(() => {
+    if (bootStatus === 'idle') loadBoot();
+  }, [bootStatus, loadBoot]);
+
+  const wa = config?.whatsapp;
+
+  // While loading or if whatsapp is disabled, render nothing
   if (!wa?.enabled) return null;
 
   const isLeft = wa.position === 'bottom-left';
@@ -15,7 +30,12 @@ export default function WhatsAppFab() {
       target="_blank"
       rel="noopener noreferrer"
       className="whatsapp-fab"
-      style={{ left: isLeft ? 24 : undefined, right: isLeft ? undefined : 24 }}
+      style={{
+        left:  isLeft ? '24px' : 'auto',
+        right: isLeft ? 'auto' : '24px',
+        bottom: '24px',
+        animation: 'fade-in 0.4s ease',
+      }}
       aria-label={wa.buttonText}
       title={wa.buttonText}
     >

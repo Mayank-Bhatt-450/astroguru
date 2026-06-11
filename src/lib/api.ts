@@ -233,3 +233,58 @@ export async function adminUpdateContent(
 ): Promise<ApiResult<{ updated: boolean }>> {
   return gasRequest<{ updated: boolean }>('adminUpdateSheet', { adminToken, sheetName, rows }, 'POST');
 }
+
+// ── Admin: cancel & reschedule ────────────────────────────
+
+export interface BookingBySlotResult {
+  id:              string;
+  name:            string;
+  email:           string;
+  phone:           string;
+  serviceId:       string;
+  slotId:          string;
+  status:          string;
+  meetLink:        string;
+  calendarEventId: string;
+  createdAt:       string;
+}
+
+export async function adminGetBookingBySlot(
+  adminToken: string,
+  slotId: string
+): Promise<ApiResult<BookingBySlotResult | null>> {
+  return gasRequest<BookingBySlotResult | null>(
+    'adminGetBookingBySlot', { adminToken, slotId }, 'POST'
+  );
+}
+
+export async function adminCancelBooking(
+  adminToken: string,
+  bookingId: string,
+  reason: string
+): Promise<ApiResult<{ cancelled: boolean; bookingId: string }>> {
+  return gasRequest<{ cancelled: boolean; bookingId: string }>(
+    'adminCancelBooking', { adminToken, bookingId, reason }, 'POST'
+  );
+}
+
+export async function adminRescheduleBooking(
+  adminToken: string,
+  bookingId: string,
+  newSlotId: string,
+  reason: string
+): Promise<ApiResult<{
+  rescheduled:        boolean;
+  bookingId:          string;
+  newSlotId:          string;
+  newMeetLink:        string;
+  newCalendarEventId: string;
+}>> {
+  return gasRequest<{
+    rescheduled:        boolean;
+    bookingId:          string;
+    newSlotId:          string;
+    newMeetLink:        string;
+    newCalendarEventId: string;
+  }>('adminRescheduleBooking', { adminToken, bookingId, newSlotId, reason }, 'POST');
+}

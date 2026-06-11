@@ -8,10 +8,24 @@ export default function HeroSection() {
   const openServicePicker = useAppStore(s => s.openServicePicker);
   const hero              = content?.hero;
 
+  // ── Urgency badge text ─────────────────────────────────────
+  // Always show A badge — falls back to 'Live Consultations Available'
+  // while boot is loading or if urgency messaging is disabled.
+  const urgencyText =
+    bootStatus === 'ready' && config?.urgency?.enabled && config.urgency.promoText
+      ? config.urgency.promoText
+      : 'Live Consultations Available';
+
   return (
     <section
       className="section-lg orb-container"
-      style={{ position: 'relative', background: 'var(--color-pure-white)', overflow: 'hidden', paddingTop: 96, paddingBottom: 96 }}
+      style={{
+        position: 'relative',
+        background: 'var(--color-pure-white)',
+        overflow: 'hidden',
+        paddingTop: 96,
+        paddingBottom: 96,
+      }}
     >
       {/* Gradient orbs */}
       <div className="orb orb-violet"  style={{ width: 600, height: 600, top: -120, left: -100, opacity: 0.7 }} />
@@ -19,15 +33,19 @@ export default function HeroSection() {
       <div className="orb orb-amber"   style={{ width: 400, height: 400, bottom: -60, left: '40%', opacity: 0.4 }} />
 
       <div className="container" style={{ position: 'relative', zIndex: 1 }}>
-        {/* Eyebrow */}
+
+        {/* ── Urgency badge — always visible ── */}
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
-          <span className="badge badge-violet" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span
+            className="badge badge-violet"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, animation: 'fade-in 0.5s ease' }}
+          >
             <span className="pulse-dot" />
-            {config?.urgency?.enabled ? config.urgency.promoText : 'Live Consultations Available'}
+            {urgencyText}
           </span>
         </div>
 
-        {/* Headline */}
+        {/* ── Headline ── */}
         <div style={{ textAlign: 'center', maxWidth: 720, margin: '0 auto' }}>
           {bootStatus === 'loading' ? (
             <>
@@ -58,12 +76,12 @@ export default function HeroSection() {
           )}
         </div>
 
-        {/* CTAs — both buttons now open the service picker */}
+        {/* ── CTAs ── */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 48 }}>
           <button
             className="btn btn-primary"
             style={{ fontSize: 16 }}
-            onClick={() => openServicePicker()}   // no serviceId → picks first active service
+            onClick={() => openServicePicker()}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z"/>
@@ -75,47 +93,66 @@ export default function HeroSection() {
           </a>
         </div>
 
-        {/* Social proof */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+        {/* ── Social proof ── */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 80 }}>
           <div className="avatar-stack">
             {['PS','RV','AN','KM'].map((initials, i) => (
-              <div key={i} className="avatar-stack-item"
-                style={{ background: ['#ebdafd','#d6fcf4','#fce7f3','#dbeafe'][i] }}>
+              <div
+                key={i}
+                className="avatar-stack-item"
+                style={{ background: ['#ebdafd','#d6fcf4','#fce7f3','#dbeafe'][i] }}
+              >
                 {initials}
               </div>
             ))}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span className="star-row">
-              {'★★★★★'.split('').map((s, i) => <span key={i} className="star">{s}</span>)}
+              {'★★★★★'.split('').map((s, i) => (
+                <span key={i} className="star">{s}</span>
+              ))}
             </span>
             <span className="social-proof-text">
-              loved by {content?.about?.clientsServed
+              loved by{' '}
+              {content?.about?.clientsServed
                 ? `${(content.about.clientsServed as number).toLocaleString()}+`
-                : '2,500+'} clients
+                : '2,500+'}{' '}
+              clients
             </span>
           </div>
         </div>
 
-        {/* Stat cards */}
-        <div style={{ marginTop: 80, display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16, maxWidth: 800, margin: '80px auto 0' }}>
+        {/* ── Stat cards ── */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4,1fr)',
+          gap: 16,
+          maxWidth: 800,
+          margin: '0 auto',
+        }}>
           {[
             { value: content?.about?.clientsServed ? `${content.about.clientsServed}+` : '2,500+', label: 'Lives Guided' },
             { value: content?.about?.yearsExperience ? `${content.about.yearsExperience}+` : '10+', label: 'Years Experience' },
-            { value: '4.9 / 5',  label: 'Average Rating' },
-            { value: '3 Hrs',    label: 'Response Time' },
+            { value: '4.9 / 5', label: 'Average Rating' },
+            { value: '3 Hrs',   label: 'Response Time' },
           ].map(stat => (
             <div key={stat.label} className="card" style={{ textAlign: 'center', padding: '20px 16px', boxShadow: 'var(--shadow-card)' }}>
-              <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 600, color: 'var(--color-voltage-violet)', letterSpacing: '-0.6px', marginBottom: 4 }}>
+              <div style={{
+                fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 600,
+                color: 'var(--color-voltage-violet)', letterSpacing: '-0.6px', marginBottom: 4,
+              }}>
                 {bootStatus === 'loading'
                   ? <div className="skeleton" style={{ height: 32, borderRadius: 6 }} />
                   : stat.value
                 }
               </div>
-              <div style={{ fontSize: 12, color: 'var(--color-slate)', fontWeight: 500 }}>{stat.label}</div>
+              <div style={{ fontSize: 12, color: 'var(--color-slate)', fontWeight: 500 }}>
+                {stat.label}
+              </div>
             </div>
           ))}
         </div>
+
       </div>
     </section>
   );
