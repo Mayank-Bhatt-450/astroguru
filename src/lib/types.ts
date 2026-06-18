@@ -170,6 +170,23 @@ export interface QuickConsultFormData {
   email: string;
   phone: string;
   questions: [string, string?, string?];
+  idempotencyKey?: string;
+}
+
+export interface QuickConsultRecord {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  question1: string;
+  question2?: string;
+  question3?: string;
+  answer1?: string;
+  answer2?: string;
+  answer3?: string;
+  status: 'received' | 'answered';
+  createdAt: string;
+  answeredAt?: string;
 }
 
 // ── API Responses ─────────────────────────────────────────

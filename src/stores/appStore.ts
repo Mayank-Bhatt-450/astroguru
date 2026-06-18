@@ -73,7 +73,7 @@ interface AppState {
   confirmResult:   ConfirmResult | null;
 
   // Actions — boot
-  loadBoot:   () => Promise<void>;
+  loadBoot:   (bustCache?: boolean) => Promise<void>;
   reloadBoot: () => Promise<void>;
 
   // Actions — slots
@@ -100,6 +100,37 @@ interface AppState {
   setBookingId:        (id: string) => void;
   setConfirmResult:    (result: ConfirmResult) => void;
   setUserTimezone:     (tz: string) => void;
+}
+
+// ── Helpers ─────────────────────────────────────────────────
+// Tolerant boolean coercion — mirrors GAS cfgBool().
+// Handles all forms that Google Sheets / stale cache might produce:
+//   boolean true | string 'true' | string 'TRUE' | string 'True' | number 1
+function toConfigBool(v: unknown): boolean {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'string')  return v.toLowerCase() === 'true';
+  if (typeof v === 'number')  return v === 1;
+  return false;
+}
+
+function normalizeConfig(config: SiteConfig): SiteConfig {
+  if (import.meta.env.DEV) {
+    console.log('[normalizeConfig] raw enabled values:', {
+      waEnabled:      (config.whatsapp as unknown as Record<string,unknown>).enabled,
+      urgencyEnabled: (config.urgency  as unknown as Record<string,unknown>).enabled,
+    });
+  }
+  return {
+    ...config,
+    whatsapp: {
+      ...config.whatsapp,
+      enabled: toConfigBool((config.whatsapp as unknown as Record<string,unknown>).enabled),
+    },
+    urgency: {
+      ...config.urgency,
+      enabled: toConfigBool((config.urgency as unknown as Record<string,unknown>).enabled),
+    },
+  };
 }
 
 // ── Store ─────────────────────────────────────────────────
@@ -135,24 +166,58 @@ export const useAppStore = create<AppState>()(
     confirmResult:   null,
 
     // ── Boot ─────────────────────────────────────────────
-    loadBoot: async () => {
+    loadBoot: async (bustCache = false) => {
       const cached = bootCache.get();
-      if (cached) {
-        set({ boot: cached, bootStatus: 'ready', bootError: null });
+      if (cached && !bustCache) {
+        if (import.meta.env.DEV) console.log('[AppStore] Using cached boot data');
+        const normalizedCached = { ...cached, config: normalizeConfig(cached.config) };
+        set({ boot: normalizedCached, bootStatus: 'ready', bootError: null });
         scheduleUtcMidnightReset(() => get().reloadBoot());
         return;
       }
+      if (import.meta.env.DEV) console.log('[AppStore] Fetching fresh boot data from server', { bustCache });
       set({ bootStatus: 'loading', bootError: null });
-      const result = await fetchBoot();
-      if (!result.ok) { set({ bootStatus: 'error', bootError: result.error }); return; }
-      bootCache.set(result.data);
-      set({ boot: result.data, bootStatus: 'ready', bootError: null });
+      const result = await fetchBoot(bustCache);
+      if (!result.ok) { 
+        if (import.meta.env.DEV) console.error('[AppStore] Boot fetch failed:', result.error);
+        set({ bootStatus: 'error', bootError: result.error }); 
+        return; 
+      }
+      if (import.meta.env.DEV) console.log('[AppStore] Boot data received:', { 
+        config: result.data.config,
+        whatsapp: result.data.config?.whatsapp,
+        urgency: result.data.config?.urgency
+      });
+      const normalizedData = { ...result.data, config: normalizeConfig(result.data.config) };
+      bootCache.set(normalizedData);
+      set({ boot: normalizedData, bootStatus: 'ready', bootError: null });
       scheduleUtcMidnightReset(() => get().reloadBoot());
+      
+      // Verify the config is accessible via selectors after state update
+      if (import.meta.env.DEV) {
+        const newState = get();
+        console.log('[AppStore] Post-loadBoot state verification:', {
+          bootStatus: newState.bootStatus,
+          configPresent: !!newState.boot?.config,
+          whatsapp: newState.boot?.config?.whatsapp,
+          urgency: newState.boot?.config?.urgency
+        });
+      }
     },
 
     reloadBoot: async () => {
+      if (import.meta.env.DEV) console.log('[AppStore] reloadBoot called - invalidating cache and refetching');
       bootCache.invalidate();
-      await get().loadBoot();
+      await get().loadBoot(true); // force bypass cache
+      
+      // Verify the config was loaded correctly
+      const newBoot = get().boot;
+      if (import.meta.env.DEV && newBoot) {
+        console.log('[AppStore] reloadBoot verification - config loaded:', {
+          whatsapp: newBoot.config?.whatsapp,
+          urgency: newBoot.config?.urgency
+        });
+      }
     },
 
     // ── Slots ─────────────────────────────────────────────
@@ -335,7 +400,7 @@ export const useAppStore = create<AppState>()(
 
 // ── Selectors ─────────────────────────────────────────────
 export const selectBoot         = (s: AppState) => s.boot;
-export const selectConfig       = (s: AppState) => s.boot?.config ?? null;
+export const selectConfig       = (s: AppState) => (s.boot?.config ? normalizeConfig(s.boot.config) : null);
 export const selectServices     = (s: AppState) => s.boot?.services ?? [];
 export const selectPricing      = (s: AppState) => s.boot?.pricing ?? [];
 export const selectContent      = (s: AppState) => s.boot?.content ?? null;

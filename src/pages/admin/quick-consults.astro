@@ -1,0 +1,9 @@
+---
+// src/pages/admin/quick-consults.astro
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import AdminQuickConsultManager from '../../components/admin/AdminQuickConsultManager';
+---
+
+<AdminLayout title="Quick Consults" activeSection="quick-consults">
+  <AdminQuickConsultManager client:load />
+</AdminLayout>

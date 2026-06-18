@@ -7,11 +7,12 @@ export interface Props {
 const { title = 'Admin Panel', activeSection = 'dashboard' } = Astro.props;
 
 const nav = [
-  { id: 'dashboard', icon: '▦',  label: 'Dashboard',       href: '/admin' },
-  { id: 'bookings',  icon: '📅', label: 'Bookings',        href: '/admin/bookings' },
-  { id: 'slots',     icon: '⏰', label: 'Manage Slots',    href: '/admin/slots' },
-  { id: 'content',   icon: '✏️', label: 'Content Manager', href: '/admin/content' },
-  { id: 'settings',  icon: '⚙️', label: 'Settings',        href: '/admin/settings' },
+  { id: 'dashboard',      icon: '▦',  label: 'Dashboard',       href: '/admin' },
+  { id: 'bookings',       icon: '📅', label: 'Bookings',        href: '/admin/bookings' },
+  { id: 'slots',          icon: '⏰', label: 'Manage Slots',    href: '/admin/slots' },
+  { id: 'quick-consults',  icon: '⚡', label: 'Quick Consults', href: '/admin/quick-consults' },
+  { id: 'content',        icon: '✏️', label: 'Content Manager', href: '/admin/content' },
+  { id: 'settings',       icon: '⚙️', label: 'Settings',        href: '/admin/settings' },
 ];
 ---
 

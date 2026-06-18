@@ -2,7 +2,7 @@
 // When PUBLIC_SKIP_PAYMENT=true the payment step is bypassed:
 // submitQuickConsult() is called directly after OTP verification.
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -36,17 +36,38 @@ function Spinner({ size = 16, color = 'currentColor' }: { size?: number; color?:
 
 export default function QuickConsultForm() {
   const { boot } = useAppStore();
-  const [phase,     setPhase]     = useState<Phase>('form');
-  const [formData,  setFormData]  = useState<FormData | null>(null);
-  const [otpDigits, setOtpDigits] = useState(['','','','','','']);
-  const [error,     setError]     = useState('');
-  const [consultId, setConsultId] = useState('');
+  const [phase,       setPhase]       = useState<Phase>('form');
+  const [formData,    setFormData]    = useState<FormData | null>(null);
+  const [otpDigits,   setOtpDigits]   = useState(['','','','','','']);
+  const [error,       setError]       = useState('');
+  const [consultId,   setConsultId]   = useState('');
+  const [verifying,   setVerifying]   = useState(false);
+  const [submitting,  setSubmitting]  = useState(false);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const submissionInProgress = useRef(false);
+  const autoVerifyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const qc           = boot?.content?.quickConsult;
   const price        = (qc?.price as number) ?? 49900;
   const priceDisplay = (qc?.priceDisplay as string) ?? '₹499';
   const config       = boot?.config;
+
+  // Cleanup auto-verify timeout on phase change or unmount
+  useEffect(() => {
+    return () => {
+      if (autoVerifyTimeoutRef.current) {
+        clearTimeout(autoVerifyTimeoutRef.current);
+        autoVerifyTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (phase !== 'otp' && autoVerifyTimeoutRef.current) {
+      clearTimeout(autoVerifyTimeoutRef.current);
+      autoVerifyTimeoutRef.current = null;
+    }
+  }, [phase]);
 
   const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -63,10 +84,17 @@ export default function QuickConsultForm() {
 
   // ── Step 2: Verify OTP ─────────────────────────────────────
   const verifyOtp = async () => {
+    if (verifying || submissionInProgress.current) return;
+    if (autoVerifyTimeoutRef.current) {
+      clearTimeout(autoVerifyTimeoutRef.current);
+      autoVerifyTimeoutRef.current = null;
+    }
     const code = otpDigits.join('');
     if (code.length < 6) { setError('Please enter all 6 digits.'); return; }
     setError('');
+    setVerifying(true);
     const token = await otpService.confirmOtp(formData!.email, code);
+    setVerifying(false);
     if (!token) { setError('Incorrect OTP. Please check and try again.'); return; }
 
     // ── SKIP_PAYMENT bypass: submit directly without payment ──
@@ -79,9 +107,14 @@ export default function QuickConsultForm() {
 
   // ── Submit directly (dev bypass OR post-payment) ──────────
   const submitDirect = async () => {
-    if (!formData) return;
+    if (!formData || submitting || submissionInProgress.current) return;
+    submissionInProgress.current = true;
+    setSubmitting(true);
     setPhase('submitting');
     setError('');
+
+    // Generate idempotency key: hash of email + questions + timestamp (minute precision)
+    const idempotencyKey = `qc_${formData.email}_${formData.question1}_${Date.now() / 60000 | 0}`;
 
     const res = await submitQuickConsult({
       name:      formData.name,
@@ -94,7 +127,11 @@ export default function QuickConsultForm() {
       ] as [string, string?, string?],
       razorpayPaymentId: SKIP_PAYMENT ? 'dev_bypass' : '',
       razorpayOrderId:   SKIP_PAYMENT ? 'dev_bypass' : '',
+      idempotencyKey,
     });
+
+    setSubmitting(false);
+    submissionInProgress.current = false;
 
     if (res.ok) {
       setConsultId(res.data.consultId);
@@ -107,7 +144,7 @@ export default function QuickConsultForm() {
 
   // ── Step 3: Real payment ───────────────────────────────────
   const pay = async () => {
-    if (!formData) return;
+    if (!formData || submissionInProgress.current) return;
     setError('');
     const result = await initiatePayment({
       serviceId:   'quick_consult',
@@ -136,9 +173,13 @@ export default function QuickConsultForm() {
     const val = e.target.value.replace(/\D/g, '').slice(-1);
     const next = [...otpDigits]; next[i] = val; setOtpDigits(next);
     if (val && i < 5) inputRefs.current[i + 1]?.focus();
-    if (next.every(Boolean)) {
+    if (next.every(Boolean) && !verifying && !submissionInProgress.current) {
       // Auto-verify when all 6 digits entered
-      setTimeout(() => {
+      if (autoVerifyTimeoutRef.current) {
+        clearTimeout(autoVerifyTimeoutRef.current);
+      }
+      autoVerifyTimeoutRef.current = setTimeout(() => {
+        if (verifying || submissionInProgress.current) return;
         const code = next.join('');
         if (code.length === 6) {
           otpService.confirmOtp(formData!.email, code).then(token => {
@@ -281,8 +322,12 @@ export default function QuickConsultForm() {
               />
             ))}
           </div>
-          <button className="btn btn-primary w-full" style={{ justifyContent: 'center' }} onClick={verifyOtp}>
-            Verify & {SKIP_PAYMENT ? 'Submit Questions' : 'Continue to Payment'}
+          <button className="btn btn-primary w-full" style={{ justifyContent: 'center' }} onClick={verifyOtp} disabled={verifying}>
+            {verifying ? (
+              <>Verifying… <Spinner size={16} /></>
+            ) : (
+              `Verify & ${SKIP_PAYMENT ? 'Submit Questions' : 'Continue to Payment'}`
+            )}
           </button>
           <button
             style={{ marginTop: 12, fontSize: 13, color: 'var(--color-slate)', background: 'none', border: 'none', cursor: 'pointer', width: '100%' }}

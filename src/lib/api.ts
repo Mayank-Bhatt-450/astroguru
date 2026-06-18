@@ -11,6 +11,7 @@
 import type {
   ApiResult, BootPayload, Slot, LockResult, ConfirmResult,
   BookingRecord, BirthDetailsData, QuickConsultFormData, SlotTemplate,
+  QuickConsultRecord,
 } from './types';
 
 const GAS_URL = import.meta.env.PUBLIC_GAS_URL as string;
@@ -74,8 +75,9 @@ async function gasRequest<T>(
 }
 
 // ── Boot ─────────────────────────────────────────────────
-export async function fetchBoot(): Promise<ApiResult<BootPayload>> {
-  return gasRequest<BootPayload>('boot');
+export async function fetchBoot(bustCache = false): Promise<ApiResult<BootPayload>> {
+  const params = bustCache ? { _t: Date.now() } : {};
+  return gasRequest<BootPayload>('boot', params);
 }
 
 // ── Slots ─────────────────────────────────────────────────
@@ -287,4 +289,34 @@ export async function adminRescheduleBooking(
     newMeetLink:        string;
     newCalendarEventId: string;
   }>('adminRescheduleBooking', { adminToken, bookingId, newSlotId, reason }, 'POST');
+}
+
+// ── Admin: Quick Consults ──────────────────────────────────
+export async function adminFetchQuickConsults(
+  adminToken: string
+): Promise<ApiResult<QuickConsultRecord[]>> {
+  return gasRequest<QuickConsultRecord[]>('adminGetQuickConsults', { adminToken }, 'POST');
+}
+
+export async function adminAnswerQuickConsult(
+  adminToken: string,
+  consultId: string,
+  answers: [string, string?, string?]
+): Promise<ApiResult<{ answered: boolean }>> {
+  return gasRequest<{ answered: boolean }>('adminAnswerQuickConsult', { adminToken, consultId, answers }, 'POST');
+}
+
+// ── Admin: Config repair ──────────────────────────────────
+/**
+ * Repairs boolean cells in the Config sheet.
+ * Google Sheets auto-converts string 'true' → boolean TRUE via setValue(),
+ * which breaks the getConfig() equality check.
+ * Run this once after initial setup or if WhatsApp/Urgency stop appearing.
+ */
+export async function adminFixConfigBooleans(
+  adminToken: string
+): Promise<ApiResult<{ fixed: number }>> {
+  return gasRequest<{ fixed: number }>(
+    'fixConfigBooleans', { adminToken }, 'POST'
+  );
 }

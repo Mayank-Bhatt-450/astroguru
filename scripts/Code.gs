@@ -399,6 +399,7 @@ function route(action, params, body) {
       case 'adminToggleSlot':      return ok(adminToggleSlot(body));
       case 'adminUpdateSheet':     return ok(adminUpdateSheet(body));
       case 'adminCancelBooking':   return ok(adminCancelBooking(body));
+      case 'fixConfigBooleans':    return ok(fixConfigBooleans());  // repair boolean cells
       case 'adminRescheduleBooking': return ok(adminRescheduleBooking(body));
       case 'adminGetBookingBySlot': return ok(adminGetBookingBySlot(body));
       case 'checkSlot':            return ok(checkSlot(params));   // live availability check (GET)
@@ -494,10 +495,59 @@ function getBoot() {
   };
 }
 
+// ── fixConfigBooleans ────────────────────────────────────────
+// Run this manually from the GAS editor if the Config sheet has
+// boolean TRUE/FALSE cells (instead of string 'true'/'false').
+// Google Sheets auto-converts string 'true' → boolean TRUE on setValue().
+// This utility rewrites them as plain text with @-format.
+function fixConfigBooleans() {
+  var s       = sheet('Config');
+  var data    = s.getDataRange().getValues();
+  var headers = data[0];
+  var keyCol  = headers.indexOf('key')   + 1;
+  var valCol  = headers.indexOf('value') + 1;
+  var boolKeys = ['waEnabled', 'urgencyEnabled'];
+  var fixed   = 0;
+
+  for (var i = 1; i < data.length; i++) {
+    var key = String(data[i][keyCol - 1]);
+    if (boolKeys.indexOf(key) === -1) continue;
+    var raw = data[i][valCol - 1];
+    // If the cell contains a boolean, rewrite as text
+    if (typeof raw === 'boolean') {
+      var textVal = raw ? 'true' : 'false';
+      var cell = s.getRange(i + 1, valCol);
+      cell.setNumberFormat('@'); // force text format
+      cell.setValue(textVal);
+      Logger.log('fixConfigBooleans: fixed key=' + key + ' from boolean ' + raw + ' to string "' + textVal + '"');
+      fixed++;
+    }
+  }
+  Logger.log('fixConfigBooleans: fixed ' + fixed + ' cell(s)');
+  return { fixed: fixed };
+}
+
+// ── cfgBool: tolerant boolean coercion ──────────────────────
+// Google Sheets auto-converts string 'true' → boolean TRUE via setValue().
+// getValues() then returns boolean true, NOT string 'true'.
+// cfg.waEnabled === 'true' would FAIL (boolean true !== string 'true').
+// This helper handles all truthy forms from Sheets:
+//   boolean true | string 'true' | string 'TRUE' | string 'True' | number 1
+function cfgBool(v) {
+  if (v === true)  return true;
+  if (v === false) return false;
+  if (typeof v === 'string') return v.toLowerCase() === 'true';
+  return Boolean(v);
+}
+
 function getConfig() {
   var rows = sheetRows('Config');
   var cfg  = {};
   rows.forEach(function(r) { cfg[r.key] = r.value; });
+
+  Logger.log('getConfig: waEnabled raw=' + JSON.stringify(cfg.waEnabled) +
+    ' type=' + typeof cfg.waEnabled +
+    ' urgencyEnabled raw=' + JSON.stringify(cfg.urgencyEnabled));
 
   return {
     siteName:       cfg.siteName       || 'Jyotish Consultations',
@@ -507,14 +557,14 @@ function getConfig() {
     currencySymbol: cfg.currencySymbol || '₹',
     currencyCode:   cfg.currencyCode   || 'INR',
     whatsapp: {
-      enabled:        cfg.waEnabled === 'true',
+      enabled:        cfgBool(cfg.waEnabled),
       number:         cfg.waNumber        || '',
       buttonText:     cfg.waButtonText    || 'Chat with us',
       position:       cfg.waPosition      || 'bottom-right',
       defaultMessage: cfg.waMessage       || 'Hi, I would like to book a consultation.',
     },
     urgency: {
-      enabled:           cfg.urgencyEnabled === 'true',
+      enabled:           cfgBool(cfg.urgencyEnabled),
       slotsLeftText:     cfg.urgencySlotsText    || '',
       responseTimeHours: parseInt(cfg.urgencyResponseHours) || 3,
       promoText:         cfg.urgencyPromoText     || 'Limited spots this month',
@@ -812,7 +862,11 @@ function devConfirmBooking(body) {
 
     var eventResource = {
       summary:     slotRow.serviceName + ' Consultation — ' + name,
-      description: 'Booking ID: ' + bookingId + '\n[DEV MODE - no payment charged]\nClient: ' + name + '\nEmail: ' + email + '\nPhone: ' + phone,
+      description: 'Booking ID: ' + bookingId + '
+[DEV MODE - no payment charged]
+Client: ' + name + '
+Email: ' + email + '
+Phone: ' + phone,
       start:  { dateTime: startTime.toISOString(), timeZone: 'UTC' },
       end:    { dateTime: endTime.toISOString(),   timeZone: 'UTC' },
       attendees: [
@@ -1339,6 +1393,10 @@ function adminGetBookings(body) {
   return rows;
 }
 
+// Boolean keys in the Config sheet — values must be stored as plain text
+// to prevent Google Sheets from auto-converting 'true'/'false' → boolean TRUE/FALSE.
+var CONFIG_BOOL_KEYS = ['waEnabled', 'urgencyEnabled'];
+
 function adminUpdateSheet(body) {
   if (!verifyAdmin(body.adminToken)) throw new Error('Unauthorized');
   var s = SS.getSheetByName(body.sheetName);
@@ -1346,18 +1404,48 @@ function adminUpdateSheet(body) {
 
   var data    = s.getDataRange().getValues();
   var headers = data[0];
+  var valCol  = headers.indexOf('value') + 1; // 1-indexed for getRange
 
   body.rows.forEach(function(kv) {
-    var key   = kv[0];
+    var key   = String(kv[0]);
     var value = kv[1];
     var found = false;
+
+    // Normalise boolean values to lowercase string before writing
+    // so cfgBool() can reliably parse them back.
+    var isBoolKey = CONFIG_BOOL_KEYS.indexOf(key) !== -1;
+    if (isBoolKey) {
+      // Coerce to canonical lowercase string 'true' or 'false'
+      value = (value === true || String(value).toLowerCase() === 'true') ? 'true' : 'false';
+    }
+
     for (var i = 1; i < data.length; i++) {
-      if (data[i][headers.indexOf('key')] !== key) continue;
-      s.getRange(i + 1, headers.indexOf('value') + 1).setValue(value);
+      if (String(data[i][headers.indexOf('key')]) !== key) continue;
+      var cell = s.getRange(i + 1, valCol);
+      if (isBoolKey) {
+        // Force text number format BEFORE writing to prevent auto-conversion
+        // '@' tells Sheets to treat the cell as plain text.
+        cell.setNumberFormat('@');
+        cell.setValue(value);
+      } else {
+        cell.setValue(value);
+      }
       found = true;
+      Logger.log('adminUpdateSheet: updated key=' + key + ' value=' + value);
       break;
     }
-    if (!found) s.appendRow([key, value]);
+    if (!found) {
+      if (isBoolKey) {
+        // Append with explicit text format
+        var newRow = s.appendRow([key, value]);
+        // Format the value cell of the new row as text
+        var lastRow = s.getLastRow();
+        s.getRange(lastRow, valCol).setNumberFormat('@');
+      } else {
+        s.appendRow([key, value]);
+      }
+      Logger.log('adminUpdateSheet: inserted key=' + key + ' value=' + value);
+    }
   });
   return { updated: true };
 }
@@ -1553,7 +1641,7 @@ function adminCancelBooking(body) {
       if (String(slotRows[sk].id) === slotId) { slotRow = slotRows[sk]; break; }
     }
     var timeStr = slotRow
-      ? Utilities.formatDate(new Date(slotRow.startUtc), tz, "EEEE, d MMMM yyyy 'at' HH:mm")
+      ? Utilities.formatDate(new Date(slotRow.startUtc), tz, 'EEEE, d MMMM yyyy 'at' HH:mm')
       : 'your scheduled time';
 
     var html = '<div style="font-family:Georgia,serif;max-width:560px;margin:auto;padding:32px;background:#07111f;color:#c8d8e8;border-radius:12px;">'
@@ -1692,7 +1780,9 @@ function adminRescheduleBooking(body) {
     var endTime   = new Date(newSlotRow.endUtc);
     var newEventResource = {
       summary:     (newSlotRow.serviceName || bookingRow.serviceId) + ' Consultation — ' + bookingRow.name,
-      description: 'Booking ID: ' + bookingId + ' (Rescheduled)\nClient: ' + bookingRow.name + '\nEmail: ' + bookingRow.email,
+      description: 'Booking ID: ' + bookingId + ' (Rescheduled)
+Client: ' + bookingRow.name + '
+Email: ' + bookingRow.email,
       start:  { dateTime: startTime.toISOString(), timeZone: 'UTC' },
       end:    { dateTime: endTime.toISOString(),   timeZone: 'UTC' },
       attendees: [
@@ -1750,7 +1840,7 @@ function adminRescheduleBooking(body) {
   // ── Send rescheduling email ───────────────────────────────
   try {
     var tz2      = getConfig().timezone || 'Asia/Kolkata';
-    var newTime  = Utilities.formatDate(new Date(newSlotRow.startUtc), tz2, "EEEE, d MMMM yyyy 'at' HH:mm");
+    var newTime  = Utilities.formatDate(new Date(newSlotRow.startUtc), tz2, 'EEEE, d MMMM yyyy 'at' HH:mm');
     var html2    = '<div style="font-family:Georgia,serif;max-width:560px;margin:auto;padding:32px;background:#07111f;color:#c8d8e8;border-radius:12px;">'
       + '<h2 style="color:#ffc107;">📅 Booking Rescheduled</h2>'
       + '<p>Dear ' + bookingRow.name + ',</p>'

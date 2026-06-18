@@ -7,6 +7,15 @@ export default function HeroSection() {
   const config            = useAppStore(selectConfig);
   const openServicePicker = useAppStore(s => s.openServicePicker);
   const hero              = content?.hero;
+  const boot              = useAppStore(s => s.boot);
+
+  // Enhanced debug logging
+  if (import.meta.env.DEV) {
+    console.log('[HeroSection] bootStatus:', bootStatus, 'boot:', boot ? 'loaded' : 'null', 'config:', config ? 'present' : 'null', 'urgency:', config?.urgency);
+    if (config?.urgency) {
+      console.log('[HeroSection] Urgency config details:', { enabled: config.urgency.enabled, promoText: config.urgency.promoText });
+    }
+  }
 
   // ── Urgency badge text ─────────────────────────────────────
   // Always show A badge — falls back to 'Live Consultations Available'
@@ -15,6 +24,10 @@ export default function HeroSection() {
     bootStatus === 'ready' && config?.urgency?.enabled && config.urgency.promoText
       ? config.urgency.promoText
       : 'Live Consultations Available';
+
+  if (import.meta.env.DEV) {
+    console.log('[HeroSection] Rendering urgencyText:', urgencyText);
+  }
 
   return (
     <section

@@ -10,16 +10,46 @@ export default function WhatsAppFab() {
   const bootStatus = useAppStore(s => s.bootStatus);
   const config     = useAppStore(selectConfig);
   const loadBoot   = useAppStore(s => s.loadBoot);
+  const boot       = useAppStore(s => s.boot);
+  const bootError  = useAppStore(s => s.bootError);
 
   // Trigger boot load if this island is on a page that didn't include AppBootstrap
   useEffect(() => {
-    if (bootStatus === 'idle') loadBoot();
+    if (bootStatus === 'idle') {
+      if (import.meta.env.DEV) console.log('[WhatsAppFab] bootStatus is idle, triggering loadBoot');
+      loadBoot();
+    }
   }, [bootStatus, loadBoot]);
 
   const wa = config?.whatsapp;
 
+  // Enhanced debug logging
+  if (import.meta.env.DEV) {
+    console.log('[WhatsAppFab] bootStatus:', bootStatus, 'bootError:', bootError, 'config:', config ? 'present' : 'null', 'wa:', wa);
+    if (wa) {
+      console.log('[WhatsAppFab] WhatsApp config details:', { enabled: wa.enabled, number: wa.number, position: wa.position });
+    }
+  }
+
+  // Show loading state while boot is loading
+  if (bootStatus === 'loading') {
+    if (import.meta.env.DEV) console.log('[WhatsAppFab] Still loading boot data...');
+    return null;
+  }
+
+  // Show error state if boot failed
+  if (bootStatus === 'error') {
+    if (import.meta.env.DEV) console.error('[WhatsAppFab] Boot failed:', bootError);
+    return null;
+  }
+
   // While loading or if whatsapp is disabled, render nothing
-  if (!wa?.enabled) return null;
+  if (!wa?.enabled) {
+    if (import.meta.env.DEV) {
+      console.log('[WhatsAppFab] Not rendering - reason:', !wa ? 'wa is null/undefined' : 'wa.enabled is false');
+    }
+    return null;
+  }
 
   const isLeft = wa.position === 'bottom-left';
   const href   = `https://wa.me/${wa.number}?text=${encodeURIComponent(wa.defaultMessage)}`;

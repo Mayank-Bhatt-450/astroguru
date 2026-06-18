@@ -5,9 +5,50 @@
 // 3. Loads current settings from boot cache on mount
 
 import { useState, useEffect } from 'react';
+import type { UseFormRegister } from 'react-hook-form';
+
+// ── ToggleSwitch ──────────────────────────────────────────
+// Renders a styled toggle. react-hook-form registers it as
+// a checkbox — checked=true means the feature is enabled.
+// We use NO value prop so react-hook-form gives us true/false booleans.
+function ToggleSwitch({
+  name, register,
+}: {
+  name: string;
+  register: UseFormRegister<Record<string, unknown>>;
+}) {
+  return (
+    <label style={{ position: 'relative', display: 'inline-block', width: 44, height: 24, cursor: 'pointer', flexShrink: 0 }}>
+      <input
+        type="checkbox"
+        {...register(name)}
+        style={{ opacity: 0, width: 0, height: 0, position: 'absolute' }}
+      />
+      <span style={{
+        position: 'absolute', inset: 0,
+        background: 'var(--color-mist)',
+        borderRadius: 12,
+        transition: 'background 0.2s',
+      }} />
+      <style>{`
+        input:checked + span { background: var(--color-voltage-violet) !important; }
+        input:checked + span + span { transform: translateX(20px) !important; }
+      `}</style>
+      <span style={{
+        position: 'absolute', top: 2, left: 2,
+        width: 20, height: 20, borderRadius: '50%',
+        background: 'white',
+        boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+        transition: 'transform 0.2s',
+      }} />
+    </label>
+  );
+}
+
 import { useForm } from 'react-hook-form';
 import { bootCache } from '../../lib/cache';
-import { adminUpdateContent } from '../../lib/api';
+import { adminUpdateContent, adminFixConfigBooleans } from '../../lib/api';
+import { useAppStore } from '../../stores/appStore';
 
 function getAdminToken(): string {
   if (typeof window === 'undefined') return '';
@@ -30,6 +71,7 @@ export default function AdminSettings() {
   const [saving,    setSaving]    = useState(false);
   const [result,    setResult]    = useState<{ ok: boolean; msg: string } | null>(null);
 
+  const reloadBoot = useAppStore(s => s.reloadBoot);
   const { register, handleSubmit, reset } = useForm();
 
   // Pre-fill from cache if available
@@ -37,24 +79,29 @@ export default function AdminSettings() {
     const boot = bootCache.get();
     if (!boot) return;
     const c = boot.config;
+    // Checkboxes need boolean values (not strings) for react-hook-form
+    // String → boolean coercion handles stale cache with string 'true'/'false'
+    const toBool = (v: unknown) => v === true || v === 'true' || v === '1';
     reset({
-      waEnabled:            String(c.whatsapp.enabled),
-      waNumber:             c.whatsapp.number,
-      waButtonText:         c.whatsapp.buttonText,
-      waPosition:           c.whatsapp.position,
-      waMessage:            c.whatsapp.defaultMessage,
-      urgencyEnabled:       String(c.urgency.enabled),
-      urgencySlotsText:     c.urgency.slotsLeftText,
-      urgencyResponseHours: String(c.urgency.responseTimeHours),
-      urgencyPromoText:     c.urgency.promoText,
-      urgencyCountdown:     c.urgency.countdownEndTime,
-      adminEmail:           c.adminEmail,
-      timezone:             c.timezone,
-      currencyCode:         c.currencyCode,
+      waEnabled:            toBool(c.whatsapp.enabled),
+      waNumber:             c.whatsapp.number      || '',
+      waButtonText:         c.whatsapp.buttonText  || '',
+      waPosition:           c.whatsapp.position    || 'bottom-right',
+      waMessage:            c.whatsapp.defaultMessage || '',
+      urgencyEnabled:       toBool(c.urgency.enabled),
+      urgencySlotsText:     c.urgency.slotsLeftText || '',
+      urgencyResponseHours: String(c.urgency.responseTimeHours || '3'),
+      urgencyPromoText:     c.urgency.promoText     || '',
+      urgencyCountdown:     c.urgency.countdownEndTime || '',
+      adminEmail:           c.adminEmail   || '',
+      timezone:             c.timezone     || 'Asia/Kolkata',
+      currencyCode:         c.currencyCode || 'INR',
     });
   }, [reset]);
 
   const onSave = async (data: Record<string, string>) => {
+    if (import.meta.env.DEV) console.log('[AdminSettings] Save triggered with data:', data);
+    
     const token = getAdminToken();
     if (!token) { setResult({ ok: false, msg: 'Admin token required.' }); return; }
 
@@ -62,13 +109,16 @@ export default function AdminSettings() {
     setResult(null);
 
     // Build key-value rows for the Config sheet
+    // checkboxes give boolean true/false; === true covers both boolean true
+    // and string 'true' for backward compat
+    const boolStr = (v: unknown) => (v === true || v === 'true') ? 'true' : 'false';
     const rows: unknown[][] = [
-      ['waEnabled',            data.waEnabled === 'true' ? 'true' : 'false'],
+      ['waEnabled',            boolStr(data.waEnabled)],
       ['waNumber',             data.waNumber || ''],
       ['waButtonText',         data.waButtonText || ''],
       ['waPosition',           data.waPosition || 'bottom-right'],
       ['waMessage',            data.waMessage || ''],
-      ['urgencyEnabled',       data.urgencyEnabled === 'true' ? 'true' : 'false'],
+      ['urgencyEnabled',       boolStr(data.urgencyEnabled)],
       ['urgencySlotsText',     data.urgencySlotsText || ''],
       ['urgencyResponseHours', data.urgencyResponseHours || '3'],
       ['urgencyPromoText',     data.urgencyPromoText || ''],
@@ -78,10 +128,13 @@ export default function AdminSettings() {
       ['currencyCode',         data.currencyCode || 'INR'],
     ];
 
+    if (import.meta.env.DEV) console.log('[AdminSettings] Sending rows to backend:', rows);
+
     const res = await adminUpdateContent(token, 'Config', rows);
     setSaving(false);
 
     if (!res.ok) {
+      if (import.meta.env.DEV) console.error('[AdminSettings] Save failed:', res.error);
       if (res.error?.toLowerCase().includes('unauthorized')) {
         clearAdminToken();
         setResult({ ok: false, msg: 'Invalid admin token. Token cleared — save again to re-enter.' });
@@ -91,8 +144,20 @@ export default function AdminSettings() {
       return;
     }
 
-    bootCache.invalidate(); // force fresh boot on next load
-    setResult({ ok: true, msg: '✓ Settings saved. Site cache cleared — changes live on next page load.' });
+    if (import.meta.env.DEV) console.log('[AdminSettings] Save successful, reloading boot...');
+    bootCache.invalidate(); // clear stale cache
+    await reloadBoot(); // fetch fresh config immediately
+    
+    // Verify the config was actually updated in the store
+    const newBoot = bootCache.get();
+    if (import.meta.env.DEV && newBoot) {
+      console.log('[AdminSettings] Post-reload verification - config:', {
+        whatsapp: newBoot.config?.whatsapp,
+        urgency: newBoot.config?.urgency
+      });
+    }
+    
+    setResult({ ok: true, msg: '✓ Settings saved and applied instantly.' });
     setTimeout(() => setResult(null), 5000);
   };
 
@@ -130,13 +195,7 @@ export default function AdminSettings() {
                 <p style={{ fontWeight:600, fontSize:14 }}>Enable WhatsApp Button</p>
                 <p style={{ fontSize:13, color:'var(--color-slate)' }}>Shows a floating chat button on all pages</p>
               </div>
-              <label style={{ position:'relative', display:'inline-block', width:44, height:24, cursor:'pointer' }}>
-                <input type="checkbox" {...register('waEnabled')} style={{ opacity:0, width:0, height:0 }} />
-                <span style={{
-                  position:'absolute', inset:0, background:'var(--color-mist)',
-                  borderRadius:12, transition:'0.2s',
-                }} />
-              </label>
+  <ToggleSwitch name="waEnabled" register={register} />
             </div>
             {[
               { label:'WhatsApp Number (without +)', name:'waNumber', placeholder:'919876543210', hint:'Include country code e.g. 91 for India' },
@@ -171,7 +230,7 @@ export default function AdminSettings() {
                 <p style={{ fontWeight:600, fontSize:14 }}>Enable Urgency Messaging</p>
                 <p style={{ fontSize:13, color:'var(--color-slate)' }}>Shows urgency badge in the hero section</p>
               </div>
-              <input type="checkbox" {...register('urgencyEnabled')} style={{ width:18, height:18, accentColor:'var(--color-voltage-violet)', cursor:'pointer' }} />
+              <ToggleSwitch name="urgencyEnabled" register={register} />
             </div>
             <div className="form-group mb-16">
               <label className="form-label">Promo Badge Text</label>
@@ -223,6 +282,49 @@ export default function AdminSettings() {
           <button type="submit" className="btn btn-primary" style={{ padding:'12px 28px' }} disabled={saving}>
             {saving ? 'Saving…' : 'Save Settings'}
           </button>
+        </div>
+
+        {/* Debug Panel */}
+        <div style={{ marginTop:24, padding:16, background:'#f5f5f5', borderRadius:8, fontSize:12, fontFamily:'monospace' }}>
+          <h5 style={{ marginBottom:12, fontWeight:600 }}>🔍 Debug: Current Config State</h5>
+          <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
+            <div>
+              <strong>WhatsApp:</strong>
+              <pre style={{ marginTop:4, whiteSpace:'pre-wrap' }}>{JSON.stringify(bootCache.get()?.config?.whatsapp || 'not loaded', null, 2)}</pre>
+            </div>
+            <div>
+              <strong>Urgency:</strong>
+              <pre style={{ marginTop:4, whiteSpace:'pre-wrap' }}>{JSON.stringify(bootCache.get()?.config?.urgency || 'not loaded', null, 2)}</pre>
+            </div>
+          </div>
+          <div style={{ marginTop:12, display:'flex', gap:8 }}>
+            <button type="button" className="btn btn-ghost" style={{ padding:'6px 12px', fontSize:12 }} onClick={() => { bootCache.invalidate(); reloadBoot(); }}>
+              🔄 Force Reload Config
+            </button>
+            <button type="button" className="btn btn-ghost" style={{ padding:'6px 12px', fontSize:12 }} onClick={() => { console.log('Current boot cache:', bootCache.get()); }}>
+              📋 Log Cache to Console
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ padding:'6px 12px', fontSize:12, borderColor:'#f59e0b', color:'#92400e', background:'#fef3c7' }}
+              onClick={async () => {
+                const token = getAdminToken();
+                if (!token) return;
+                const res = await adminFixConfigBooleans(token);
+                if (res.ok) {
+                  alert('✓ Fixed ' + res.data.fixed + ' boolean cell(s) in Config sheet. Reloading boot data...');
+                  bootCache.invalidate();
+                  await reloadBoot();
+                  setResult({ ok: true, msg: '✓ Config sheet repaired and settings reloaded.' });
+                } else {
+                  alert('Fix failed: ' + res.error);
+                }
+              }}
+            >
+              🔧 Fix Boolean Cells (Run Once)
+            </button>
+          </div>
         </div>
       </div>
     </form>

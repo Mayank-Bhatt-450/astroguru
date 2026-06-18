@@ -802,6 +802,53 @@ select.form-input { cursor: pointer; }
   box-shadow: 0 8px 30px rgba(37, 211, 102, 0.55);
 }
 
+/* ── Toggle Switch ────────────────────────────────────────── */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  cursor: pointer;
+}
+.toggle-switch input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  z-index: 2;
+}
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  background: var(--color-mist);
+  border-radius: 12px;
+  transition: background 0.2s;
+}
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  transition: transform 0.2s;
+  pointer-events: none;
+}
+.toggle-switch:hover .toggle-track {
+  background: var(--color-slate);
+}
+.toggle-switch input:checked + .toggle-track {
+  background: var(--color-voltage-violet);
+}
+.toggle-switch input:checked + .toggle-track + .toggle-thumb {
+  transform: translateX(20px);
+}
+
 /* ── Grid helpers ────────────────────────────────────────── */
 .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--spacing-24); }
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--spacing-24); }
