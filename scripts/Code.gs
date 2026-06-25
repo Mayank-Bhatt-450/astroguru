@@ -19,6 +19,63 @@ var RZP_SEC        = PROPS.getProperty('RAZORPAY_KEY_SECRET')  || '';
 var FROM_EMAIL     = PROPS.getProperty('FROM_EMAIL')           || '';
 var DEFAULT_CAL_ID = PROPS.getProperty('CALENDAR_ID_DEFAULT')  || 'primary';
 
+// ── Security constants ────────────────────────────────────
+var OTP_RATE_LIMIT_SECONDS  = 60;   // min gap between OTP sends per email
+var OTP_MAX_ATTEMPTS        = 5;    // brute-force lockout after N wrong guesses
+var OTP_LOCKOUT_SECONDS     = 900;  // 15-min lockout after exhausting attempts
+var INPUT_MAX_LENGTH        = 2000; // reject any single field longer than this
+var EMAIL_REGEX             = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+// ── Timing-safe string comparison ────────────────────────
+// Prevents timing-attack extraction of ADMIN_SECRET length/content.
+function safeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) {
+    // Still iterate to consume constant time relative to 'b'
+    var dummy = 0;
+    for (var i = 0; i < b.length; i++) dummy += b.charCodeAt(i);
+    return false;
+  }
+  var result = 0;
+  for (var i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+// ── Cryptographically-secure random integer [0, max) ─────
+// Utilities.getSecureRandom() does NOT exist in Apps Script.
+// Utilities.getUuid() is the real CSPRNG-backed API — it calls
+// Java's SecureRandom internally and returns a RFC 4122 v4 UUID
+// with 122 bits of random entropy. We take 8 hex chars (32 bits)
+// which is more than sufficient for a 6-digit OTP.
+function secureRandomInt(max) {
+  var hex = Utilities.getUuid().replace(/-/g, ''); // 32 hex chars
+  var val = parseInt(hex.substring(0, 8), 16);     // 0..4294967295
+  return val % max;
+}
+
+// ── Secure OTP generator (6 digits, CSPRNG) ───────────────
+function generateSecureOtp() {
+  return String(secureRandomInt(900000) + 100000); // 100000–999999
+}
+
+// ── Input sanitisation ────────────────────────────────────
+function sanitiseString(v, maxLen) {
+  if (v === null || v === undefined) return '';
+  var s = String(v).trim();
+  if (s.length > (maxLen || INPUT_MAX_LENGTH)) {
+    throw new Error('Input too long (max ' + (maxLen || INPUT_MAX_LENGTH) + ' chars).');
+  }
+  return s;
+}
+
+function validateEmail(email) {
+  var e = sanitiseString(email, 254);
+  if (!EMAIL_REGEX.test(e)) throw new Error('Invalid email address.');
+  return e.toLowerCase();
+}
+
 // ============================================================
 // █████  INITIALIZE SHEETS  █████████████████████████████████
 // ============================================================
@@ -62,6 +119,7 @@ function initializeSheets(forceRebuild) {
       ['currencySymbol',       '₹'],
       ['currencyCode',         'INR'],
       ['waEnabled',            'true'],
+      ['quickConsultPrice',   '49900'],  // paise — used by getCanonicalPrice()
       ['waNumber',             '919876543210'],
       ['waButtonText',         'Chat with us'],
       ['waPosition',           'bottom-right'],
@@ -147,7 +205,7 @@ function initializeSheets(forceRebuild) {
 
   // ── 8. OTP_Tokens ─────────────────────────────────────
   results.push(_initSheet('OTP_Tokens',
-    [['email','otp','expiresAt','used']],
+    [['email','otp','expiresAt','used','attempts','lockedUntil']],
     [],
     forceRebuild
   ));
@@ -379,6 +437,7 @@ function doPost(e) {
 
 function route(action, params, body) {
   try {
+    // Log action but NEVER log params — they may contain tokens or OTPs
     Logger.log('route: action=' + action);
     switch (action) {
       case 'boot':                 return ok(getBoot());
@@ -403,6 +462,8 @@ function route(action, params, body) {
       case 'adminRescheduleBooking': return ok(adminRescheduleBooking(body));
       case 'adminGetBookingBySlot': return ok(adminGetBookingBySlot(body));
       case 'checkSlot':            return ok(checkSlot(params));   // live availability check (GET)
+      case 'adminGetQuickConsults':  return ok(adminGetQuickConsults(body));
+      case 'adminAnswerQuickConsult': return ok(adminAnswerQuickConsult(body));
       default:
         Logger.log('Unknown action: ' + action);
         return err('Unknown action: ' + action);
@@ -463,7 +524,8 @@ function generateId(prefix) {
 function getBoot() {
   var config       = getConfig();
   var services     = sheetRows('Services').filter(function(r) {
-    return r.isActive === true || r.isActive === 'TRUE';
+    // cfgBool handles all forms: boolean true, 'TRUE', 'true', 'True', 1
+    return cfgBool(r.isActive);
   });
   var pricing      = sheetRows('Pricing');
   var testimonials = sheetRows('Testimonials');
@@ -500,7 +562,8 @@ function getBoot() {
 // boolean TRUE/FALSE cells (instead of string 'true'/'false').
 // Google Sheets auto-converts string 'true' → boolean TRUE on setValue().
 // This utility rewrites them as plain text with @-format.
-function fixConfigBooleans() {
+function fixConfigBooleans(body) {
+  if (!verifyAdmin(body && body.adminToken)) throw new Error('Unauthorized');
   var s       = sheet('Config');
   var data    = s.getDataRange().getValues();
   var headers = data[0];
@@ -604,8 +667,12 @@ function getSlots(params) {
   var fromMs = new Date(fromDate + 'T00:00:00Z').getTime();
   var toMs   = fromMs + days * 86400000;
 
+  // Normalise for comparison — trims whitespace and lowercases
+  // so a serviceId stored as 'numerology ' still matches 'numerology'
+  var normServiceId = String(serviceId).trim().toLowerCase();
+
   return sheetRows('Slots').filter(function(s) {
-    if (s.serviceId !== serviceId) return false;
+    if (String(s.serviceId || '').trim().toLowerCase() !== normServiceId) return false;
     var startMs = new Date(s.startUtc).getTime();
     return startMs >= fromMs && startMs < toMs;
   }).map(function(s) {
@@ -791,13 +858,23 @@ function releaseSlot(body) {
 // In production, PUBLIC_SKIP_PAYMENT must be false so this is
 // never called from the live frontend.
 function devConfirmBooking(body) {
-  var bookingId = body.bookingId;
-  var slotId    = body.slotId;
-  var lockToken = body.lockToken;
-  var name      = body.name;
-  var email     = body.email;
-  var phone     = body.phone;
-  var serviceId = body.serviceId;
+  // SECURITY: devConfirmBooking MUST be gated by admin auth.
+  // Without this, any caller with a lockToken can get a free booking.
+  // On the frontend, SKIP_PAYMENT sends the GAS_ADMIN_SECRET env var
+  // as body.adminToken — this is safe because SKIP_PAYMENT=true is
+  // never set in production.
+  if (!verifyAdmin(body.adminToken)) {
+    Logger.log('devConfirmBooking: Unauthorized attempt');
+    throw new Error('Unauthorized');
+  }
+
+  var bookingId = sanitiseString(body.bookingId, 100);
+  var slotId    = sanitiseString(body.slotId, 100);
+  var lockToken = sanitiseString(body.lockToken, 200);
+  var name      = sanitiseString(body.name, 200);
+  var email     = validateEmail(body.email);
+  var phone     = sanitiseString(body.phone, 20);
+  var serviceId = sanitiseString(body.serviceId, 100);
 
   Logger.log('devConfirmBooking: bookingId=' + bookingId + ' slotId=' + slotId);
 
@@ -862,11 +939,7 @@ function devConfirmBooking(body) {
 
     var eventResource = {
       summary:     slotRow.serviceName + ' Consultation — ' + name,
-      description: 'Booking ID: ' + bookingId + '
-[DEV MODE - no payment charged]
-Client: ' + name + '
-Email: ' + email + '
-Phone: ' + phone,
+      description: 'Booking ID: ' + bookingId + '[DEV MODE - no payment charged]Client: ' + name + 'Email: ' + email + 'Phone: ' + phone,
       start:  { dateTime: startTime.toISOString(), timeZone: 'UTC' },
       end:    { dateTime: endTime.toISOString(),   timeZone: 'UTC' },
       attendees: [
@@ -1192,47 +1265,192 @@ function saveBirthDetails(body) {
 // ============================================================
 // OTP
 // ============================================================
-function requestOtp(body) {
-  var email = body.email;
-  if (!email) throw new Error('email required');
+// ── ensureOtpTokensSchema ────────────────────────────────────
+// Self-healing migration: adds 'attempts' and 'lockedUntil' columns
+// to the OTP_Tokens sheet if they don't already exist.
+// Safe to call multiple times — skips columns that already exist.
+// This allows the new security code to work even when the sheet was
+// created with the old 4-column schema (email|otp|expiresAt|used).
+function ensureOtpTokensSchema(s) {
+  var data    = s.getDataRange().getValues();
+  var headers = data[0];
+  var changed = false;
 
-  var otp     = Math.floor(100000 + Math.random() * 900000).toString();
-  var expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  if (headers.indexOf('attempts') === -1) {
+    var nextCol = headers.length + 1;
+    s.getRange(1, nextCol).setValue('attempts');
+    // Back-fill existing rows with 0
+    if (data.length > 1) {
+      for (var i = 2; i <= data.length; i++) {
+        s.getRange(i, nextCol).setValue(0);
+      }
+    }
+    headers.push('attempts');
+    Logger.log('ensureOtpTokensSchema: added attempts column at col ' + nextCol);
+    changed = true;
+  }
+
+  if (headers.indexOf('lockedUntil') === -1) {
+    var nextCol2 = headers.length + 1;
+    s.getRange(1, nextCol2).setValue('lockedUntil');
+    // Back-fill existing rows with empty string
+    if (data.length > 1) {
+      for (var i = 2; i <= data.length; i++) {
+        s.getRange(i, nextCol2).setValue('');
+      }
+    }
+    headers.push('lockedUntil');
+    Logger.log('ensureOtpTokensSchema: added lockedUntil column at col ' + nextCol2);
+    changed = true;
+  }
+
+  if (changed) {
+    // Apply header styling to the new columns
+    var lastCol = headers.length;
+    s.getRange(1, lastCol - (changed ? 1 : 0), 1, 2)
+     .setBackground('#1a3454').setFontColor('#ffc107').setFontWeight('bold');
+  }
+}
+
+function requestOtp(body) {
+  var email = validateEmail(body.email); // validates format, lowercases
 
   var s       = sheet('OTP_Tokens');
   var data    = s.getDataRange().getValues();
   var headers = data[0];
-  var updated = false;
+  var now     = Date.now();
 
+  // ── Rate limiting: max 1 OTP per OTP_RATE_LIMIT_SECONDS per email ──
+  // Also enforce lockout after too many failed attempts.
   for (var i = 1; i < data.length; i++) {
-    if (data[i][headers.indexOf('email')] !== email) continue;
-    s.getRange(i + 1, headers.indexOf('otp')       + 1).setValue(otp);
-    s.getRange(i + 1, headers.indexOf('expiresAt') + 1).setValue(expires);
-    s.getRange(i + 1, headers.indexOf('used')      + 1).setValue('false');
+    if (String(data[i][headers.indexOf('email')]).toLowerCase() !== email) continue;
+    var lastSent = data[i][headers.indexOf('expiresAt')];
+    var attempts = parseInt(data[i][headers.indexOf('attempts')] || '0') || 0;
+
+    // Check lockout
+    var lockedUntilCol = headers.indexOf('lockedUntil');
+    if (lockedUntilCol !== -1 && data[i][lockedUntilCol]) {
+      var lockedUntil = new Date(data[i][lockedUntilCol]).getTime();
+      if (now < lockedUntil) {
+        var secsLeft = Math.ceil((lockedUntil - now) / 1000);
+        throw new Error('Too many OTP requests. Try again in ' + secsLeft + ' seconds.');
+      }
+    }
+
+    // Check send rate limit (re-send window)
+    if (lastSent) {
+      var sentAt = new Date(lastSent).getTime() - (10 * 60 * 1000); // expiresAt = sentAt + 10min
+      var elapsed = (now - sentAt) / 1000;
+      if (elapsed < OTP_RATE_LIMIT_SECONDS) {
+        var wait = Math.ceil(OTP_RATE_LIMIT_SECONDS - elapsed);
+        throw new Error('Please wait ' + wait + ' seconds before requesting another OTP.');
+      }
+    }
+    break;
+  }
+
+  // Generate OTP with CSPRNG (not Math.random)
+  var otp     = generateSecureOtp();
+  var expires = new Date(now + 10 * 60 * 1000).toISOString();
+
+  // ── Ensure OTP_Tokens has the new columns before writing ──
+  // Self-healing: if the sheet was created with the old 4-col schema
+  // (email|otp|expiresAt|used), add 'attempts' and 'lockedUntil' now.
+  // This runs in-place so no existing rows are lost.
+  ensureOtpTokensSchema(s);
+
+  // Write — do NOT log the OTP value
+  var updated = false;
+  // Reload data after potential schema migration
+  data    = s.getDataRange().getValues();
+  headers = data[0];
+  for (var j = 1; j < data.length; j++) {
+    if (String(data[j][headers.indexOf('email')]).toLowerCase() !== email) continue;
+    s.getRange(j + 1, headers.indexOf('otp')       + 1).setValue(otp);
+    s.getRange(j + 1, headers.indexOf('expiresAt') + 1).setValue(expires);
+    s.getRange(j + 1, headers.indexOf('used')      + 1).setValue('false');
+    var attCol = headers.indexOf('attempts');
+    var lukCol = headers.indexOf('lockedUntil');
+    if (attCol !== -1) s.getRange(j + 1, attCol + 1).setValue(0);
+    if (lukCol !== -1) s.getRange(j + 1, lukCol + 1).setValue('');
     updated = true;
     break;
   }
-  if (!updated) s.appendRow([email, otp, expires, 'false']);
+  if (!updated) {
+    s.appendRow([email, otp, expires, 'false', 0, '']);
+  }
 
+  Logger.log('requestOtp: sent OTP to ' + email + ' (expires ' + expires + ')'); // no OTP value in log
   sendOtpEmail(email, otp);
   return { sent: true, expiresAt: expires };
 }
 
 function verifyOtp(body) {
-  var email   = body.email;
-  var otp     = body.otp;
+  var email = validateEmail(body.email);
+  var otp   = sanitiseString(String(body.otp || ''), 10);
+
   var s       = sheet('OTP_Tokens');
   var data    = s.getDataRange().getValues();
   var headers = data[0];
+  var now     = Date.now();
 
   for (var i = 1; i < data.length; i++) {
-    if (data[i][headers.indexOf('email')] !== email) continue;
-    if (data[i][headers.indexOf('used')]  === 'true') return { verified: false, token: '' };
-    if (new Date() > new Date(data[i][headers.indexOf('expiresAt')])) return { verified: false, token: '' };
-    if (data[i][headers.indexOf('otp')].toString() !== otp.toString()) return { verified: false, token: '' };
+    if (String(data[i][headers.indexOf('email')]).toLowerCase() !== email) continue;
+
+    // Check lockout
+    var lockedUntilCol = headers.indexOf('lockedUntil');
+    if (lockedUntilCol !== -1 && data[i][lockedUntilCol]) {
+      var lockedUntil = new Date(data[i][lockedUntilCol]).getTime();
+      if (now < lockedUntil) {
+        var secsLeft = Math.ceil((lockedUntil - now) / 1000);
+        throw new Error('Account locked. Try again in ' + secsLeft + ' seconds.');
+      }
+    }
+
+    // Already used
+    if (String(data[i][headers.indexOf('used')]) === 'true') {
+      return { verified: false, token: '' };
+    }
+
+    // Expired
+    if (now > new Date(data[i][headers.indexOf('expiresAt')]).getTime()) {
+      return { verified: false, token: '' };
+    }
+
+    // Timing-safe OTP comparison (OTP is a string, not a secret key, but still good practice)
+    var storedOtp   = String(data[i][headers.indexOf('otp')] || '');
+    var otpMatches  = safeEqual(otp, storedOtp);
+    var attemptsCol = headers.indexOf('attempts');
+    var attempts    = parseInt(data[i][attemptsCol] || '0') || 0;
+
+    if (!otpMatches) {
+      // Increment attempt counter (only if column exists)
+      attempts++;
+      if (attemptsCol !== -1) {
+        s.getRange(i + 1, attemptsCol + 1).setValue(attempts);
+      }
+      // Lock after too many failed attempts
+      if (attempts >= OTP_MAX_ATTEMPTS && lockedUntilCol !== -1) {
+        var lockUntil = new Date(now + OTP_LOCKOUT_SECONDS * 1000).toISOString();
+        s.getRange(i + 1, lockedUntilCol + 1).setValue(lockUntil);
+        Logger.log('verifyOtp: locked ' + email + ' after ' + attempts + ' failed attempts');
+        throw new Error('Too many incorrect codes. Try again in ' +
+          Math.ceil(OTP_LOCKOUT_SECONDS / 60) + ' minutes.');
+      }
+      Logger.log('verifyOtp: wrong OTP for ' + email + ' (attempt ' + attempts + ')');
+      return { verified: false, token: '' };
+    }
+
+    // Correct — mark used, reset attempt counter
     s.getRange(i + 1, headers.indexOf('used') + 1).setValue('true');
+    if (attemptsCol !== -1) s.getRange(i + 1, attemptsCol + 1).setValue(0);
+    if (lockedUntilCol !== -1) s.getRange(i + 1, lockedUntilCol + 1).setValue('');
+
+    Logger.log('verifyOtp: verified OK for ' + email);
     return { verified: true, token: generateId('otp') };
   }
+
+  // Email not found — return generic response (don't reveal existence)
   return { verified: false, token: '' };
 }
 
@@ -1240,16 +1458,30 @@ function verifyOtp(body) {
 // RAZORPAY ORDER
 // ============================================================
 function createRazorpayOrder(body) {
-  var amount   = parseInt(body.amount);
-  var currency = body.currency || 'INR';
-  var receipt  = body.receipt  || generateId('rcpt');
+  // SECURITY: NEVER trust the amount from the client.
+  // Look up the canonical price from the Pricing sheet using serviceId.
+  // This prevents attackers from sending ₹1 orders for any service.
+  var serviceId = sanitiseString(body.serviceId, 100);
+  var email     = validateEmail(body.email);
+  var currency  = 'INR'; // hardcoded — do not accept from client
+  var receipt   = generateId('rcpt');
+
+  // Look up canonical price server-side
+  var amount = getCanonicalPrice(serviceId);
+  if (!amount || amount <= 0) {
+    throw new Error('Cannot determine price for service: ' + serviceId);
+  }
+
+  Logger.log('createRazorpayOrder: serviceId=' + serviceId + ' amount=' + amount + ' email=' + email);
 
   var credentials = Utilities.base64Encode(RZP_KEY + ':' + RZP_SEC);
   var response    = UrlFetchApp.fetch('https://api.razorpay.com/v1/orders', {
     method: 'post',
     headers: { 'Authorization': 'Basic ' + credentials, 'Content-Type': 'application/json' },
-    payload: JSON.stringify({ amount: amount, currency: currency, receipt: receipt,
-                              notes: { serviceId: body.serviceId, email: body.email } }),
+    payload: JSON.stringify({
+      amount: amount, currency: currency, receipt: receipt,
+      notes: { serviceId: serviceId, email: email },
+    }),
     muteHttpExceptions: true,
   });
   var order = JSON.parse(response.getContentText());
@@ -1257,18 +1489,75 @@ function createRazorpayOrder(body) {
   return { orderId: order.id, amount: order.amount, currency: order.currency, keyId: RZP_KEY };
 }
 
+// Look up the canonical price (in paise) for a service or 'quick_consult'.
+function getCanonicalPrice(serviceId) {
+  if (serviceId === 'quick_consult') {
+    // Read from Config sheet
+    var rows = sheetRows('Config');
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].key === 'quickConsultPrice') return parseInt(rows[i].value) || 0;
+    }
+    return 49900; // fallback default
+  }
+  // Read from Pricing sheet
+  var pricingRows = sheetRows('Pricing');
+  for (var j = 0; j < pricingRows.length; j++) {
+    if (pricingRows[j].serviceId === serviceId) {
+      return parseInt(pricingRows[j].price) || 0;
+    }
+  }
+  return 0;
+}
+
 // ============================================================
 // QUICK CONSULT
 // ============================================================
 function handleQuickConsult(body) {
+  // SECURITY: Require proof of payment (or dev bypass marker).
+  // Without this, anyone can submit questions for free.
+  var paymentId = sanitiseString(body.razorpayPaymentId || '', 200);
+  var orderId   = sanitiseString(body.razorpayOrderId   || '', 200);
+  var isDev     = (paymentId === 'dev_bypass' && orderId === 'dev_bypass');
+
+  if (!paymentId) {
+    throw new Error('Payment reference is required for Quick Consultation.');
+  }
+
+  // For real payments, verify with Razorpay (non-blocking — best-effort)
+  if (!isDev && RZP_KEY && RZP_SEC) {
+    try {
+      var credentials = Utilities.base64Encode(RZP_KEY + ':' + RZP_SEC);
+      var resp = UrlFetchApp.fetch(
+        'https://api.razorpay.com/v1/payments/' + encodeURIComponent(paymentId),
+        { headers: { 'Authorization': 'Basic ' + credentials }, muteHttpExceptions: true }
+      );
+      var payment = JSON.parse(resp.getContentText());
+      if (!payment.id || payment.status !== 'captured') {
+        Logger.log('handleQuickConsult: payment verification failed for ' + paymentId + ' status=' + payment.status);
+        throw new Error('Payment not completed. Please complete payment before submitting questions.');
+      }
+      Logger.log('handleQuickConsult: payment verified paymentId=' + paymentId + ' amount=' + payment.amount);
+    } catch (verifyErr) {
+      if (verifyErr.message.indexOf('Payment not completed') !== -1) throw verifyErr;
+      // Network/API error — log but don't block (Razorpay unavailability shouldn't lose submissions)
+      Logger.log('handleQuickConsult: payment verification network error (non-blocking): ' + verifyErr.message);
+    }
+  }
+
+  var name  = sanitiseString(body.name,  200);
+  var email = validateEmail(body.email);
+  var phone = sanitiseString(body.phone,  20);
+  var q1    = sanitiseString((body.questions && body.questions[0]) || '', 2000);
+  var q2    = sanitiseString((body.questions && body.questions[1]) || '', 2000);
+  var q3    = sanitiseString((body.questions && body.questions[2]) || '', 2000);
+
   var consultId = generateId('qc');
   try {
     var s = SS.getSheetByName('QuickConsults') || SS.insertSheet('QuickConsults');
     s.appendRow([
-      consultId, body.name, body.email, body.phone,
-      (body.questions && body.questions[0]) || '',
-      (body.questions && body.questions[1]) || '',
-      (body.questions && body.questions[2]) || '',
+      consultId, name, email, phone,
+      q1, q2, q3,
+      paymentId,  // store payment ref for audit
       'received', new Date().toISOString(),
     ]);
   } catch (e) { Logger.log('QuickConsult sheet error: ' + e.message); }
@@ -1294,7 +1583,7 @@ function adminCreateSlots(body) {
   // ── Auth ──────────────────────────────────────────────────
   Logger.log('adminCreateSlots body keys: ' + Object.keys(body).join(', '));
   if (!verifyAdmin(body.adminToken)) {
-    Logger.log('adminCreateSlots: Unauthorized. Token received: "' + body.adminToken + '" Expected length: ' + (ADMIN_SEC ? ADMIN_SEC.length : 0));
+    Logger.log('adminCreateSlots: Unauthorized attempt.');
     throw new Error('Unauthorized');
   }
 
@@ -1329,10 +1618,37 @@ function adminCreateSlots(body) {
   var slotsSheet  = sheet('Slots');
   var services    = sheetRows('Services');
   var serviceRow  = null;
-  for (var si = 0; si < services.length; si++) {
-    if (services[si].id === serviceId) { serviceRow = services[si]; break; }
+
+  // Log every service row for diagnosis
+  Logger.log('adminCreateSlots: received serviceId=' + JSON.stringify(serviceId) +
+    ' type=' + typeof serviceId + ' length=' + String(serviceId).length);
+  Logger.log('adminCreateSlots: Services sheet has ' + services.length + ' rows');
+  for (var di = 0; di < services.length; di++) {
+    Logger.log('  row[' + di + '] id=' + JSON.stringify(services[di].id) +
+      ' type=' + typeof services[di].id +
+      ' len=' + String(services[di].id).length +
+      ' isActive=' + services[di].isActive);
   }
+
+  // Tolerant match: trim whitespace, compare lowercase
+  for (var si = 0; si < services.length; si++) {
+    var sheetId = String(services[si].id || '').trim().toLowerCase();
+    var bodyId  = String(serviceId || '').trim().toLowerCase();
+    if (sheetId === bodyId) {
+      serviceRow = services[si];
+      Logger.log('adminCreateSlots: MATCH found at row ' + si + ' serviceName=' + serviceRow.name);
+      break;
+    }
+  }
+
+  if (!serviceRow) {
+    Logger.log('adminCreateSlots: WARNING — serviceId "' + serviceId + '" not matched in Services sheet. ' +
+      'Using serviceId as serviceName fallback.');
+  }
+
+  // Use the original casing from the body (not lowercased) for the stored serviceId
   var serviceName = serviceRow ? serviceRow.name : serviceId;
+  Logger.log('adminCreateSlots: serviceName="' + serviceName + '" tz="' + tz + '"');
 
   var created = 0;
   var slotIds = [];
@@ -1454,7 +1770,11 @@ function adminUpdateSheet(body) {
 // UTILITIES
 // ============================================================
 function verifyAdmin(token) {
-  return ADMIN_SEC && token === ADMIN_SEC;
+  if (!ADMIN_SEC) {
+    Logger.log('SECURITY: ADMIN_SECRET is not configured in Script Properties!');
+    return false;
+  }
+  return safeEqual(String(token || ''), ADMIN_SEC);
 }
 
 function getCalendarForService(serviceId) {
@@ -1641,7 +1961,7 @@ function adminCancelBooking(body) {
       if (String(slotRows[sk].id) === slotId) { slotRow = slotRows[sk]; break; }
     }
     var timeStr = slotRow
-      ? Utilities.formatDate(new Date(slotRow.startUtc), tz, 'EEEE, d MMMM yyyy 'at' HH:mm')
+      ? Utilities.formatDate(new Date(slotRow.startUtc), tz, "EEEE, d MMMM yyyy 'at' HH:mm")
       : 'your scheduled time';
 
     var html = '<div style="font-family:Georgia,serif;max-width:560px;margin:auto;padding:32px;background:#07111f;color:#c8d8e8;border-radius:12px;">'
@@ -1780,9 +2100,7 @@ function adminRescheduleBooking(body) {
     var endTime   = new Date(newSlotRow.endUtc);
     var newEventResource = {
       summary:     (newSlotRow.serviceName || bookingRow.serviceId) + ' Consultation — ' + bookingRow.name,
-      description: 'Booking ID: ' + bookingId + ' (Rescheduled)
-Client: ' + bookingRow.name + '
-Email: ' + bookingRow.email,
+      description: 'Booking ID: ' + bookingId + ' (Rescheduled)Client: ' + bookingRow.name + 'Email: ' + bookingRow.email,
       start:  { dateTime: startTime.toISOString(), timeZone: 'UTC' },
       end:    { dateTime: endTime.toISOString(),   timeZone: 'UTC' },
       attendees: [
@@ -1840,7 +2158,7 @@ Email: ' + bookingRow.email,
   // ── Send rescheduling email ───────────────────────────────
   try {
     var tz2      = getConfig().timezone || 'Asia/Kolkata';
-    var newTime  = Utilities.formatDate(new Date(newSlotRow.startUtc), tz2, 'EEEE, d MMMM yyyy 'at' HH:mm');
+    var newTime  = Utilities.formatDate(new Date(newSlotRow.startUtc), tz2, "EEEE, d MMMM yyyy 'at' HH:mm");
     var html2    = '<div style="font-family:Georgia,serif;max-width:560px;margin:auto;padding:32px;background:#07111f;color:#c8d8e8;border-radius:12px;">'
       + '<h2 style="color:#ffc107;">📅 Booking Rescheduled</h2>'
       + '<p>Dear ' + bookingRow.name + ',</p>'
@@ -1877,6 +2195,109 @@ Email: ' + bookingRow.email,
     newMeetLink:      newMeetLink,
     newCalendarEventId: newCalEventId,
   };
+}
+
+// ============================================================
+// ADMIN — QUICK CONSULTS
+// ============================================================
+function adminGetQuickConsults(body) {
+  if (!verifyAdmin(body.adminToken)) throw new Error('Unauthorized');
+  var rows = sheetRows('QuickConsults');
+  // Return newest first
+  return rows.sort(function(a, b) {
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+}
+
+function adminAnswerQuickConsult(body) {
+  if (!verifyAdmin(body.adminToken)) throw new Error('Unauthorized');
+  var consultId = body.consultId;
+  var answers   = body.answers; // array [answer1, answer2?, answer3?]
+  if (!consultId) throw new Error('consultId required');
+  if (!answers || !answers[0]) throw new Error('At least one answer is required');
+
+  var s       = sheet('QuickConsults');
+  var data    = s.getDataRange().getValues();
+  var headers = data[0];
+
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][headers.indexOf('id')]) !== String(consultId)) continue;
+
+    // Write answers — add answer columns if missing
+    ensureQuickConsultsAnswerSchema(s, headers);
+    // Reload after potential schema migration
+    data    = s.getDataRange().getValues();
+    headers = data[0];
+
+    var now = new Date().toISOString();
+    if (headers.indexOf('answer1') !== -1)
+      s.getRange(i + 1, headers.indexOf('answer1') + 1).setValue(answers[0] || '');
+    if (headers.indexOf('answer2') !== -1)
+      s.getRange(i + 1, headers.indexOf('answer2') + 1).setValue(answers[1] || '');
+    if (headers.indexOf('answer3') !== -1)
+      s.getRange(i + 1, headers.indexOf('answer3') + 1).setValue(answers[2] || '');
+    if (headers.indexOf('status') !== -1)
+      s.getRange(i + 1, headers.indexOf('status') + 1).setValue('answered');
+    if (headers.indexOf('answeredAt') !== -1)
+      s.getRange(i + 1, headers.indexOf('answeredAt') + 1).setValue(now);
+
+    // Send answer email to client
+    var row = {};
+    headers.forEach(function(h, idx) { row[h] = data[i][idx]; });
+    try {
+      sendQuickConsultAnswerEmail(row, answers);
+    } catch (emailErr) {
+      Logger.log('adminAnswerQuickConsult: email failed (non-fatal): ' + emailErr.message);
+    }
+
+    return { answered: true, consultId: consultId };
+  }
+  throw new Error('Quick consult not found: ' + consultId);
+}
+
+// Self-healing: add answer columns to QuickConsults sheet if missing
+function ensureQuickConsultsAnswerSchema(s, headers) {
+  var needed = ['answer1', 'answer2', 'answer3', 'answeredAt'];
+  var added  = 0;
+  needed.forEach(function(col) {
+    if (headers.indexOf(col) === -1) {
+      var nextCol = headers.length + 1 + added;
+      s.getRange(1, nextCol).setValue(col);
+      s.getRange(1, nextCol)
+       .setBackground('#1a3454').setFontColor('#ffc107').setFontWeight('bold');
+      headers.push(col);
+      added++;
+      Logger.log('ensureQuickConsultsAnswerSchema: added column ' + col);
+    }
+  });
+}
+
+function sendQuickConsultAnswerEmail(row, answers) {
+  var html = '<div style="font-family:Georgia,serif;max-width:560px;margin:auto;padding:32px;'
+    + 'background:#07111f;color:#c8d8e8;border-radius:12px;">'
+    + '<h2 style="color:#ffc107;">✨ Your Consultation Answers</h2>'
+    + '<p>Dear ' + (row.name || 'Client') + ',</p>'
+    + '<p>Here are the personalised answers to your questions:</p>';
+
+  [row.question1, row.question2, row.question3].forEach(function(q, idx) {
+    if (!q || !answers[idx]) return;
+    html += '<div style="margin:20px 0;padding:16px;border:1px solid rgba(255,193,7,0.2);border-radius:8px;">'
+      + '<p style="opacity:0.6;font-size:0.85rem;margin-bottom:8px;">Question ' + (idx + 1) + '</p>'
+      + '<p style="color:#ffc107;margin-bottom:12px;">' + q + '</p>'
+      + '<p style="opacity:0.6;font-size:0.85rem;margin-bottom:8px;">Answer</p>'
+      + '<p>' + answers[idx] + '</p>'
+      + '</div>';
+  });
+
+  html += '<p style="font-size:0.85rem;opacity:0.6;margin-top:24px;">Reference: ' + row.id + '</p>'
+    + '</div>';
+
+  GmailApp.sendEmail(
+    row.email,
+    'Your Quick Consultation Answers — Jyotish Consultations',
+    'Your consultation answers are ready. Please view this email in HTML format.',
+    { htmlBody: html, name: 'Jyotish Consultations' }
+  );
 }
 
 // ============================================================

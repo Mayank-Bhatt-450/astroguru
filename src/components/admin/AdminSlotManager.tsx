@@ -499,7 +499,10 @@ export default function AdminSlotManager({ services }: Props) {
     slotsCache.invalidateAll();
     setForm({ ...DEFAULT_FORM, serviceId: form.serviceId });
     setSelectedDays([1,2,3,4,5]);
-    loadSlots(filterSvcId);
+    // Switch the table filter to the service we just created slots for
+    // so the user can immediately see the new rows — not the previous service.
+    setFilterSvcId(form.serviceId);
+    loadSlots(form.serviceId);
     setTimeout(() => { setShowCreate(false); setCreateResult(null); }, 1800);
   };
 
@@ -854,7 +857,7 @@ export default function AdminSlotManager({ services }: Props) {
                                 {slot.status === 'disabled' ? '👁 Enable' : '🚫 Disable'}
                               </button>
                             )}
-                            {slot.status !== 'booked' && slot.status !== 'locked' && (
+                            {slot.status !== 'locked' && (
                               <button
                                 onClick={() => handleDelete(slot)}
                                 style={{

@@ -141,13 +141,14 @@ export async function confirmBooking(params: {
  * NEVER expose this in production — it is gated by ADMIN_SECRET in GAS.
  */
 export async function devConfirmBooking(params: {
-  bookingId: string;
-  slotId:    string;
-  lockToken: string;
-  name:      string;
-  email:     string;
-  phone:     string;
-  serviceId: string;
+  bookingId:  string;
+  slotId:     string;
+  lockToken:  string;
+  name:       string;
+  email:      string;
+  phone:      string;
+  serviceId:  string;
+  adminToken: string;  // required — devConfirmBooking is admin-gated in GAS
 }): Promise<ApiResult<ConfirmResult>> {
   return gasRequest<ConfirmResult>('devConfirmBooking', params, 'POST');
 }
@@ -184,7 +185,7 @@ export async function verifyOtp(
 export async function submitQuickConsult(
   data: QuickConsultFormData & { razorpayPaymentId: string; razorpayOrderId: string }
 ): Promise<ApiResult<{ consultId: string }>> {
-  return gasRequest<{ consultId: string }>('quickConsult', data, 'POST');
+  return gasRequest<{ consultId: string }>('quickConsult', data as unknown as Record<string, unknown>, 'POST');
 }
 
 // ── Razorpay ──────────────────────────────────────────────

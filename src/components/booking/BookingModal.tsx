@@ -380,6 +380,10 @@ function DevPaymentBypass({ onConfirmed }: { onConfirmed: (r: ConfirmResult) => 
 
     // Call the REAL GAS backend — creates Calendar event, Meet link,
     // marks slot as booked, sends confirmation email, writes Bookings row.
+    // devConfirmBooking requires admin auth — use the GAS_ADMIN_SECRET env var.
+    // This is only used when SKIP_PAYMENT=true (dev/staging). In production,
+    // SKIP_PAYMENT is false so this code path never executes.
+    const adminToken = import.meta.env.PUBLIC_DEV_ADMIN_TOKEN || '';
     const result = await devConfirmBooking({
       bookingId,
       slotId:    selectedSlot.id,
@@ -388,6 +392,7 @@ function DevPaymentBypass({ onConfirmed }: { onConfirmed: (r: ConfirmResult) => 
       email:     bookingForm.email,
       phone:     bookingForm.phone,
       serviceId: selectedService.id,
+      adminToken,
     });
 
     if (!result.ok) {
