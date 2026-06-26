@@ -1,4 +1,5 @@
 // src/components/islands/HeroSection.tsx
+import { useEffect, useRef } from 'react';
 import { useAppStore, selectContent, selectConfig } from '../../stores/appStore';
 
 export default function HeroSection() {
@@ -7,30 +8,32 @@ export default function HeroSection() {
   const config            = useAppStore(selectConfig);
   const openServicePicker = useAppStore(s => s.openServicePicker);
   const hero              = content?.hero;
-  const boot              = useAppStore(s => s.boot);
+  const sectionRef        = useRef<HTMLElement>(null);
 
-  // Enhanced debug logging
-  if (import.meta.env.DEV) {
-    console.log('[HeroSection] bootStatus:', bootStatus, 'boot:', boot ? 'loaded' : 'null', 'config:', config ? 'present' : 'null', 'urgency:', config?.urgency);
-    if (config?.urgency) {
-      console.log('[HeroSection] Urgency config details:', { enabled: config.urgency.enabled, promoText: config.urgency.promoText });
-    }
-  }
-
-  // ── Urgency badge text ─────────────────────────────────────
-  // Always show A badge — falls back to 'Live Consultations Available'
-  // while boot is loading or if urgency messaging is disabled.
   const urgencyText =
     bootStatus === 'ready' && config?.urgency?.enabled && config.urgency.promoText
       ? config.urgency.promoText
       : 'Live Consultations Available';
 
-  if (import.meta.env.DEV) {
-    console.log('[HeroSection] Rendering urgencyText:', urgencyText);
-  }
+  // Staggered entrance animation on mount
+  useEffect(() => {
+    const el = sectionRef.current;
+    if (!el) return;
+    const children = el.querySelectorAll('[data-animate]');
+    children.forEach((child, i) => {
+      (child as HTMLElement).style.opacity = '0';
+      (child as HTMLElement).style.transform = 'translateY(24px)';
+      setTimeout(() => {
+        (child as HTMLElement).style.transition = 'opacity 0.6s ease, transform 0.6s ease';
+        (child as HTMLElement).style.opacity = '1';
+        (child as HTMLElement).style.transform = 'translateY(0)';
+      }, 120 + i * 110);
+    });
+  }, [bootStatus]);
 
   return (
     <section
+      ref={sectionRef}
       className="section-lg orb-container"
       style={{
         position: 'relative',
@@ -40,26 +43,26 @@ export default function HeroSection() {
         paddingBottom: 96,
       }}
     >
-      {/* Gradient orbs */}
-      <div className="orb orb-violet"  style={{ width: 600, height: 600, top: -120, left: -100, opacity: 0.7 }} />
-      <div className="orb orb-pink"    style={{ width: 500, height: 500, top: 0, right: -80, opacity: 0.6 }} />
-      <div className="orb orb-amber"   style={{ width: 400, height: 400, bottom: -60, left: '40%', opacity: 0.4 }} />
+      {/* Gradient orbs — animated */}
+      <div className="orb orb-violet orb-drift"  style={{ width: 600, height: 600, top: -120, left: -100, opacity: 0.7 }} />
+      <div className="orb orb-pink orb-drift-slow"    style={{ width: 500, height: 500, top: 0, right: -80, opacity: 0.6 }} />
+      <div className="orb orb-amber orb-drift"   style={{ width: 400, height: 400, bottom: -60, left: '40%', opacity: 0.4 }} />
 
       <div className="container" style={{ position: 'relative', zIndex: 1 }}>
 
-        {/* ── Urgency badge — always visible ── */}
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+        {/* Urgency badge */}
+        <div data-animate style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
           <span
             className="badge badge-violet"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, animation: 'fade-in 0.5s ease' }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
             <span className="pulse-dot" />
             {urgencyText}
           </span>
         </div>
 
-        {/* ── Headline ── */}
-        <div style={{ textAlign: 'center', maxWidth: 720, margin: '0 auto' }}>
+        {/* Headline */}
+        <div data-animate style={{ textAlign: 'center', maxWidth: 720, margin: '0 auto' }}>
           {bootStatus === 'loading' ? (
             <>
               <div className="skeleton" style={{ height: 64, marginBottom: 16, borderRadius: 12 }} />
@@ -89,10 +92,10 @@ export default function HeroSection() {
           )}
         </div>
 
-        {/* ── CTAs ── */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 48 }}>
+        {/* CTAs */}
+        <div data-animate style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 48 }}>
           <button
-            className="btn btn-primary"
+            className="btn btn-primary btn-hero-pulse"
             style={{ fontSize: 16 }}
             onClick={() => openServicePicker()}
           >
@@ -106,8 +109,8 @@ export default function HeroSection() {
           </a>
         </div>
 
-        {/* ── Social proof ── */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 80 }}>
+        {/* Social proof */}
+        <div data-animate style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 80, flexWrap: 'wrap' }}>
           <div className="avatar-stack">
             {['PS','RV','AN','KM'].map((initials, i) => (
               <div
@@ -135,21 +138,15 @@ export default function HeroSection() {
           </div>
         </div>
 
-        {/* ── Stat cards ── */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4,1fr)',
-          gap: 16,
-          maxWidth: 800,
-          margin: '0 auto',
-        }}>
+        {/* Stat cards */}
+        <div data-animate className="stats-grid">
           {[
             { value: content?.about?.clientsServed ? `${content.about.clientsServed}+` : '2,500+', label: 'Lives Guided' },
             { value: content?.about?.yearsExperience ? `${content.about.yearsExperience}+` : '10+', label: 'Years Experience' },
             { value: '4.9 / 5', label: 'Average Rating' },
             { value: '3 Hrs',   label: 'Response Time' },
-          ].map(stat => (
-            <div key={stat.label} className="card" style={{ textAlign: 'center', padding: '20px 16px', boxShadow: 'var(--shadow-card)' }}>
+          ].map((stat, i) => (
+            <div key={stat.label} className="card stat-card" style={{ animationDelay: `${i * 0.08}s` }}>
               <div style={{
                 fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 600,
                 color: 'var(--color-voltage-violet)', letterSpacing: '-0.6px', marginBottom: 4,

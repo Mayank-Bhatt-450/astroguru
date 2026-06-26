@@ -1,6 +1,4 @@
 // src/components/islands/PricingSection.tsx
-// CTA buttons call openServicePicker(serviceId) pre-filtered to that tier's service.
-
 import { useState } from 'react';
 import { useAppStore, selectPricing, selectServices } from '../../stores/appStore';
 
@@ -17,7 +15,7 @@ export default function PricingSection() {
   return (
     <section className="section" id="pricing" style={{ background: 'var(--color-lavender-field)' }}>
       <div className="container">
-        <div className="text-center mb-48">
+        <div className="text-center mb-48 animate-on-scroll">
           <p className="eyebrow eyebrow-dark mb-12">Transparent Pricing</p>
           <h2 className="text-heading">Investment in Your Journey</h2>
           <div className="divider-violet" />
@@ -57,22 +55,23 @@ export default function PricingSection() {
 
         {/* Pricing cards */}
         {bootStatus === 'ready' && (
-          <div style={{
+          <div className="pricing-grid animate-on-scroll" style={{
             display: 'grid',
             gridTemplateColumns: `repeat(${Math.min(displayPricing.length, 3)}, 1fr)`,
             gap: 20, maxWidth: 900, margin: '0 auto',
           }}>
-            {displayPricing.map(tier => (
+            {displayPricing.map((tier, i) => (
               <div
                 key={tier.id}
                 style={{
                   position: 'relative',
                   background: tier.isPopular ? 'var(--color-midnight-ink)' : 'var(--color-pure-white)',
                   border: tier.isPopular ? 'none' : '1px solid var(--color-mist)',
-                  borderRadius: 24, padding: 28,
+                  borderRadius: 24, padding: 'clamp(20px,4vw,28px)',
                   display: 'flex', flexDirection: 'column', gap: 20,
                   boxShadow: tier.isPopular ? '0 24px 60px rgba(17,24,39,0.25)' : 'none',
                   transform: tier.isPopular ? 'scale(1.02)' : 'none',
+                  animationDelay: `${i * 0.08}s`,
                 }}
               >
                 {tier.isPopular && (
@@ -104,8 +103,8 @@ export default function PricingSection() {
                 </div>
 
                 <ul style={{ listStyle: 'none', padding: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {(tier.features as string[]).map((f, i) => (
-                    <li key={i} style={{
+                  {(tier.features as string[]).map((f, fi) => (
+                    <li key={fi} style={{
                       display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 14,
                       color: tier.isPopular ? 'rgba(255,255,255,0.8)' : 'var(--color-graphite)',
                     }}>
@@ -118,7 +117,6 @@ export default function PricingSection() {
                   ))}
                 </ul>
 
-                {/* KEY CHANGE: opens picker pre-filtered to this tier's service */}
                 <button
                   className={`btn ${tier.isPopular ? 'btn-primary' : 'btn-dark'}`}
                   style={{ justifyContent: 'center', fontSize: 15 }}

@@ -7,7 +7,6 @@ import type { SlotDisplay } from '../../lib/types';
 export default function SlotPickerSection() {
   const { loadSlots, slotsByDay, slotsStatus, slotsError, userTimezone, openBooking } = useAppStore();
   const services = useAppStore(selectServices).filter(s => s.isActive);
-  const boot     = useAppStore(s => s.boot);
 
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
   const [selectedDayKey,    setSelectedDayKey]    = useState<string | null>(null);
@@ -36,7 +35,7 @@ export default function SlotPickerSection() {
     if (slot.status !== 'available') return;
     setSelectedSlotId(slot.id);
     const svc = services.find(s => s.id === slot.serviceId);
-    if (svc) openBooking(slot, svc);
+    if (svc) openBooking(slot, svc, '', '', '');
   };
 
   const handleServiceChange = (id: string) => {
@@ -47,20 +46,21 @@ export default function SlotPickerSection() {
   };
 
   return (
-    <section className="section orb-container" id="book" style={{ background: 'var(--color-pure-white)', scrollMarginTop: '80px', overflow: 'hidden', position: 'relative' }}>
-      {/* Subtle orb */}
+    <section
+      className="section orb-container animate-on-scroll"
+      id="book"
+      style={{ background: 'var(--color-pure-white)', scrollMarginTop: '80px', overflow: 'hidden', position: 'relative' }}
+    >
       <div className="orb orb-lavender" style={{ width: 700, height: 700, top: -200, right: -200, opacity: 0.5 }} />
 
       <div className="container" style={{ position: 'relative', zIndex: 1 }}>
-        {/* Header */}
         <div className="text-center mb-48">
           <p className="eyebrow mb-12">Schedule Your Session</p>
           <h2 className="text-heading">Choose Your Slot</h2>
           <div className="divider-violet" />
-          {/* Timezone badge */}
           <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16 }}>
             <span className="badge badge-mint" style={{ fontSize: 11 }}>
-              🌐 Times shown in your timezone: {userTimezone.replace(/_/g,' ')}
+              🌐 Times shown in: {userTimezone.replace(/_/g,' ')}
             </span>
           </div>
         </div>
@@ -81,10 +81,8 @@ export default function SlotPickerSection() {
           </div>
         )}
 
-        {/* Main picker card */}
-        <div className="card card-featured" style={{ maxWidth: 760, margin: '0 auto', padding: 36, boxShadow: 'var(--shadow-card)' }}>
+        <div className="card card-featured" style={{ maxWidth: 760, margin: '0 auto', padding: 'clamp(20px,5vw,36px)', boxShadow: 'var(--shadow-card)' }}>
 
-          {/* Week strip */}
           <div className="week-strip" style={{ marginBottom: 4 }}>
             {weekStrip.map(day => (
               <button
@@ -92,6 +90,8 @@ export default function SlotPickerSection() {
                 className={`day-chip ${!day.hasSlots ? 'no-slots' : ''} ${selectedDayKey === day.dayKey ? 'active' : ''}`}
                 onClick={() => { if (day.hasSlots) { setSelectedDayKey(day.dayKey); setSelectedSlotId(null); } }}
                 disabled={!day.hasSlots}
+                aria-pressed={selectedDayKey === day.dayKey}
+                aria-label={`${day.dayName} ${day.dayNumber} — ${day.availableCount} slots`}
               >
                 <span className="day-chip-name">{day.dayName}</span>
                 <span className="day-chip-number">{day.dayNumber}</span>
@@ -103,9 +103,8 @@ export default function SlotPickerSection() {
             ))}
           </div>
 
-          {/* Day header */}
           {selectedDayKey && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 24, marginBottom: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 24, marginBottom: 4, flexWrap: 'wrap', gap: 8 }}>
               <h4 style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600, color: 'var(--color-midnight-ink)' }}>
                 {formatDateHeader(selectedDayKey, userTimezone)}
               </h4>
@@ -113,16 +112,14 @@ export default function SlotPickerSection() {
             </div>
           )}
 
-          {/* Loading */}
           {slotsStatus === 'loading' && (
-            <div className="time-chips" style={{ marginTop: 24 }}>
+            <div className="time-chips">
               {[1,2,3,4,5,6].map(i => (
                 <div key={i} className="skeleton" style={{ height: 36, width: 90, borderRadius: 9999 }} />
               ))}
             </div>
           )}
 
-          {/* Error */}
           {slotsStatus === 'error' && (
             <div className="banner banner-error mt-20">
               {slotsError}
@@ -133,7 +130,6 @@ export default function SlotPickerSection() {
             </div>
           )}
 
-          {/* Time chips */}
           {slotsStatus === 'ready' && selectedDayKey && (
             <div className="time-chips">
               {daySlots.length === 0 ? (
@@ -144,7 +140,7 @@ export default function SlotPickerSection() {
                   className={`time-chip ${slot.status !== 'available' ? 'booked' : ''} ${selectedSlotId === slot.id ? 'selected' : ''}`}
                   onClick={() => handleSlotClick(slot)}
                   disabled={slot.status !== 'available'}
-                  title={slot.status !== 'available' ? 'Not available' : `Book ${slot.timeLabel}`}
+                  aria-label={`${slot.timeLabel}${slot.status !== 'available' ? ' — Not available' : ''}`}
                 >
                   {slot.timeLabel}
                 </button>
@@ -152,14 +148,12 @@ export default function SlotPickerSection() {
             </div>
           )}
 
-          {/* Prompt */}
           {slotsStatus === 'ready' && !selectedDayKey && (
             <p style={{ marginTop: 20, fontSize: 14, color: 'var(--color-slate)' }}>
               ← Select a date above to see available times
             </p>
           )}
 
-          {/* Urgency */}
           {slotsStatus === 'ready' && selectedDayKey && availableDay > 0 && (
             <div style={{ marginTop: 20, display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'var(--color-lavender-field)', borderRadius: 10 }}>
               <span className="pulse-dot" />
@@ -170,8 +164,7 @@ export default function SlotPickerSection() {
           )}
         </div>
 
-        {/* Trust row */}
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 32, marginTop: 32, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 'clamp(16px,4vw,32px)', marginTop: 32, flexWrap: 'wrap' }}>
           {[
             { icon: '🔐', label: 'Secure Payment' },
             { icon: '🔒', label: 'Private & Confidential' },

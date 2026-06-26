@@ -1,204 +1,195 @@
 ---
 // src/layouts/BaseLayout.astro
+// AstroGuru — public pages layout
+// Includes: mobile nav, scroll-reveal observer, AstroGuru brand
+import AppBootstrap from '../components/islands/AppBootstrap';
 import NavBookButton from '../components/islands/NavBookButton';
-import WhatsAppFab   from '../components/islands/WhatsAppFab';
-import DevModeBadge  from '../components/islands/DevModeBadge';
-import AppBootstrap  from '../components/islands/AppBootstrap';
-export interface Props {
+import WhatsAppFab from '../components/islands/WhatsAppFab';
+import BookingModal from '../components/booking/BookingModal';
+import ServicePickerModal from '../components/booking/ServicePickerModal';
+import DevModeBadge from '../components/islands/DevModeBadge';
+
+interface Props {
   title?: string;
   description?: string;
-  ogImage?: string;
-  noIndex?: boolean;
 }
-
 const {
-  title = 'Jyotish Consultations – Expert Astrology, Numerology & Vastu',
-  description = 'Book private 1-on-1 consultations for Astrology, Numerology, and Vastu Shastra with an expert Vedic practitioner.',
-  ogImage = '/og-image.jpg',
-  noIndex = false,
+  title       = 'AstroGuru — Vedic Astrology Consultations',
+  description = 'Book a private 1-on-1 consultation for astrology, numerology, or Vastu Shastra.',
 } = Astro.props;
-
-const siteUrl = import.meta.env.PUBLIC_SITE_URL || 'https://jyotish.example.com';
-const canonicalUrl = new URL(Astro.url.pathname, siteUrl).href;
 ---
-
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{title}</title>
   <meta name="description" content={description} />
-  <link rel="canonical" href={canonicalUrl} />
-  {noIndex && <meta name="robots" content="noindex, nofollow" />}
-
-  <!-- Open Graph -->
-  <meta property="og:type"        content="website" />
-  <meta property="og:url"         content={canonicalUrl} />
-  <meta property="og:title"       content={title} />
-  <meta property="og:description" content={description} />
-  <meta property="og:image"       content={`${siteUrl}${ogImage}`} />
-
-  <!-- Twitter -->
-  <meta name="twitter:card"        content="summary_large_image" />
-  <meta name="twitter:title"       content={title} />
-  <meta name="twitter:description" content={description} />
-
-  <!-- Favicon -->
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-
-  <!-- Fonts: preconnect then load -->
+  <title>{title}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-
-  <!-- Global CSS from public/styles/ — served as static file, no 404 -->
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles/global.css" />
-
-  <!-- Structured Data -->
-  <script type="application/ld+json" set:html={JSON.stringify({
-    "@context": "https://schema.org",
-    "@type": "ProfessionalService",
-    "name": "Jyotish Consultations",
-    "description": description,
-    "url": siteUrl,
-    "serviceType": ["Astrology", "Numerology", "Vastu Shastra"],
-    "priceRange": "₹₹",
-  })} />
+  <meta property="og:title"       content={title} />
+  <meta property="og:description" content={description} />
+  <meta property="og:type"        content="website" />
 </head>
 <body>
 
-<!-- ── Navigation ────────────────────────────────────────── -->
-<header class="site-nav">
-  <div class="container">
-    <div class="nav-inner">
+  <!-- Bootstrap invisible island -->
+  <AppBootstrap client:load />
 
+  <!-- ── Navigation ── -->
+  <nav class="site-nav" role="navigation" aria-label="Main navigation">
+    <div class="nav-inner">
       <!-- Logo -->
-      <a href="/" class="nav-logo">
-        <div class="nav-logo-icon">✦</div>
-        <span>Jyotish</span>
+      <a href="/" class="nav-logo" aria-label="AstroGuru home">
+        <span class="nav-logo-star">✦</span>
+        AstroGuru
       </a>
 
-      <!-- Centre links -->
-      <ul class="nav-links">
-        <li><a href="/#services"     class="nav-link">Services</a></li>
-        <li><a href="/#pricing"      class="nav-link">Pricing</a></li>
-        <li><a href="/quick-consult" class="nav-link">Quick Consult</a></li>
-        <li><a href="/#testimonials" class="nav-link">Reviews</a></li>
+      <!-- Desktop links -->
+      <ul class="nav-links" role="list">
+        <li><a href="/#services">Services</a></li>
+        <li><a href="/#pricing">Pricing</a></li>
+        <li><a href="/#testimonials">Reviews</a></li>
+        <li><a href="/#faqs">FAQs</a></li>
+        <li><a href="/quick-consult">Quick Consult</a></li>
       </ul>
 
-      <!-- Right CTA — React island so it can open the service picker modal -->
-      <div class="nav-cta">
+      <!-- Desktop CTA -->
+      <div class="hide-mobile">
         <NavBookButton client:load />
-        <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">
-          <span></span><span></span><span></span>
-        </button>
       </div>
 
+      <!-- Mobile hamburger -->
+      <button
+        class="nav-hamburger"
+        id="nav-hamburger"
+        aria-label="Open menu"
+        aria-expanded="false"
+        aria-controls="mobile-menu"
+      >
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
     </div>
-  </div>
-</header>
 
-<!-- ── Page content ───────────────────────────────────────── -->
-<main>
-  <slot />
-</main>
+    <!-- Mobile menu -->
+    <div class="mobile-menu" id="mobile-menu" role="menu">
+      <a href="/#services" role="menuitem">Services</a>
+      <a href="/#pricing"  role="menuitem">Pricing</a>
+      <a href="/#testimonials" role="menuitem">Reviews</a>
+      <a href="/#faqs"    role="menuitem">FAQs</a>
+      <a href="/quick-consult" role="menuitem">Quick Consult</a>
+      <NavBookButton client:load />
+    </div>
+  </nav>
 
-<!-- ── Footer ────────────────────────────────────────────── -->
-<footer style="background:var(--color-midnight-ink); color:var(--color-pure-white); padding:64px 0 32px;">
-  <div class="container">
-    <div style="display:grid; grid-template-columns:1.5fr 1fr 1fr 1fr; gap:48px; margin-bottom:48px;">
+  <!-- ── Page content ── -->
+  <main>
+    <slot />
+  </main>
 
+  <!-- ── Footer ── -->
+  <footer class="site-footer" role="contentinfo">
+    <div class="footer-grid">
       <div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
-          <div style="width:28px;height:28px;background:var(--color-voltage-violet);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;">✦</div>
-          <span style="font-weight:700;font-size:16px;">Jyotish</span>
+        <div class="nav-logo" style="color:white; margin-bottom:12px;">
+          <span class="nav-logo-star">✦</span> AstroGuru
         </div>
-        <p style="font-size:14px;line-height:1.7;color:rgba(255,255,255,0.55);max-width:220px;">
-          Ancient wisdom. Modern clarity. Trusted astrology, numerology, and Vastu guidance.
+        <p style="font-size:14px; line-height:1.7; max-width:280px;">
+          Ancient Vedic wisdom, personalised for your modern life. Private, confidential, and deeply transformative.
         </p>
       </div>
-
       <div>
-        <p style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:16px;">Services</p>
-        <div style="display:flex;flex-direction:column;gap:10px;">
-          <a href="/#services" style="font-size:14px;color:rgba(255,255,255,0.65);text-decoration:none;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.65)'">Vedic Astrology</a>
-          <a href="/#services" style="font-size:14px;color:rgba(255,255,255,0.65);text-decoration:none;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.65)'">Numerology</a>
-          <a href="/#services" style="font-size:14px;color:rgba(255,255,255,0.65);text-decoration:none;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.65)'">Vastu Shastra</a>
-          <a href="/quick-consult" style="font-size:14px;color:rgba(255,255,255,0.65);text-decoration:none;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.65)'">Quick Consult</a>
-        </div>
+        <p style="font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.4); margin-bottom:14px;">Services</p>
+        <ul style="list-style:none; display:flex; flex-direction:column; gap:8px;">
+          <li><a href="/#services" style="font-size:14px; color:rgba(255,255,255,0.65); transition:color 0.15s;" onmouseenter="this.style.color='white'" onmouseleave="this.style.color='rgba(255,255,255,0.65)'">Vedic Astrology</a></li>
+          <li><a href="/#services" style="font-size:14px; color:rgba(255,255,255,0.65);">Numerology</a></li>
+          <li><a href="/#services" style="font-size:14px; color:rgba(255,255,255,0.65);">Vastu Shastra</a></li>
+          <li><a href="/quick-consult" style="font-size:14px; color:rgba(255,255,255,0.65);">Quick Consult</a></li>
+        </ul>
       </div>
-
       <div>
-        <p style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:16px;">Company</p>
-        <div style="display:flex;flex-direction:column;gap:10px;">
-          <a href="/#about" style="font-size:14px;color:rgba(255,255,255,0.65);text-decoration:none;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.65)'">About</a>
-          <a href="/#testimonials" style="font-size:14px;color:rgba(255,255,255,0.65);text-decoration:none;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.65)'">Reviews</a>
-          <a href="/#faqs" style="font-size:14px;color:rgba(255,255,255,0.65);text-decoration:none;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.65)'">FAQs</a>
-        </div>
+        <p style="font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.4); margin-bottom:14px;">Info</p>
+        <ul style="list-style:none; display:flex; flex-direction:column; gap:8px;">
+          <li><a href="/#faqs" style="font-size:14px; color:rgba(255,255,255,0.65);">FAQs</a></li>
+          <li><a href="/#testimonials" style="font-size:14px; color:rgba(255,255,255,0.65);">Reviews</a></li>
+          <li><a href="/#book" style="font-size:14px; color:rgba(255,255,255,0.65);">Book a Session</a></li>
+        </ul>
       </div>
-
-      <div>
-        <p style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-bottom:16px;">Legal</p>
-        <div style="display:flex;flex-direction:column;gap:10px;">
-          <a href="/privacy" style="font-size:14px;color:rgba(255,255,255,0.65);text-decoration:none;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.65)'">Privacy Policy</a>
-          <a href="/terms"   style="font-size:14px;color:rgba(255,255,255,0.65);text-decoration:none;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.65)'">Terms of Service</a>
-          <a href="/refunds" style="font-size:14px;color:rgba(255,255,255,0.65);text-decoration:none;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.65)'">Refund Policy</a>
-        </div>
-      </div>
-
     </div>
-
-    <div style="border-top:1px solid rgba(255,255,255,0.1);padding-top:24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
-      <p style="font-size:13px;color:rgba(255,255,255,0.35);">
-        © {new Date().getFullYear()} Jyotish Consultations. All rights reserved. Consultations are for guidance only.
-      </p>
-      <p style="font-size:13px;color:rgba(255,255,255,0.35);">Made with ✦ in India</p>
+    <div class="footer-bottom">
+      <span>© {new Date().getFullYear()} AstroGuru. All rights reserved.</span>
+      <span>Made with ✦ for seekers of wisdom</span>
     </div>
-  </div>
-</footer>
+  </footer>
 
-<script>
-  // Mobile nav toggle
-  document.getElementById('navToggle')?.addEventListener('click', () => {
-    document.querySelector('.nav-links')?.classList.toggle('open');
-  });
-</script>
+  <!-- ── Floating islands ── -->
+  <WhatsAppFab    client:load />
+  <BookingModal   client:load />
+  <ServicePickerModal client:load />
+  <DevModeBadge   client:load />
 
-<style>
-  @media (max-width: 768px) {
-    .nav-links.open {
-      display: flex !important;
-      flex-direction: column;
-      position: absolute;
-      top: 64px;
-      left: 0;
-      right: 0;
-      background: white;
-      border-bottom: 1px solid var(--color-mist);
-      padding: 12px 16px 16px;
-      z-index: 99;
-      gap: 4px;
-    }
-  }
-  footer .container > div:first-child {
-    grid-template-columns: 1.5fr 1fr 1fr 1fr;
-  }
-  @media (max-width: 768px) {
-    footer .container > div:first-child {
-      grid-template-columns: 1fr 1fr !important;
-      gap: 32px !important;
-    }
-  }
-  @media (max-width: 480px) {
-    footer .container > div:first-child {
-      grid-template-columns: 1fr !important;
-    }
-  }
-</style>
+  <!-- ── Mobile nav JS ── -->
+  <script>
+    const hamburger  = document.getElementById('nav-hamburger');
+    const mobileMenu = document.getElementById('mobile-menu');
 
-  <!-- Mounted here so every page gets them — islands self-bootstrap if needed -->
-  <AppBootstrap  client:load />
-  <WhatsAppFab   client:load />
-  <DevModeBadge  client:load />
+    hamburger?.addEventListener('click', () => {
+      const isOpen = mobileMenu?.classList.toggle('open');
+      hamburger.setAttribute('aria-expanded', String(isOpen));
+    });
+
+    // Close on link click
+    mobileMenu?.querySelectorAll('a').forEach(link => {
+      link.addEventListener('click', () => {
+        mobileMenu.classList.remove('open');
+        hamburger?.setAttribute('aria-expanded', 'false');
+      });
+    });
+
+    // Close on outside click
+    document.addEventListener('click', (e) => {
+      if (!hamburger?.contains(e.target as Node) && !mobileMenu?.contains(e.target as Node)) {
+        mobileMenu?.classList.remove('open');
+        hamburger?.setAttribute('aria-expanded', 'false');
+      }
+    });
+  </script>
+
+  <!-- ── Scroll-reveal observer ── -->
+  <script>
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.12, rootMargin: '0px 0px -40px 0px' }
+    );
+
+    // Observe all .animate-on-scroll elements
+    const observe = () => {
+      document.querySelectorAll('.animate-on-scroll').forEach(el => {
+        observer.observe(el);
+      });
+    };
+
+    // Run now and after a short delay to catch hydrated islands
+    observe();
+    setTimeout(observe, 600);
+    setTimeout(observe, 1400);
+  </script>
+
+  <!-- ── Hide mobile utility class ── -->
+  <style>
+    @media (max-width: 768px) { .hide-mobile { display: none !important; } }
+  </style>
+
 </body>
 </html>

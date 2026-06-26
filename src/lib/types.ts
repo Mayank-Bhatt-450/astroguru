@@ -1,34 +1,35 @@
 // src/lib/types.ts
 // ============================================================
-// Central type definitions for the entire application
+// Central type definitions — updated for AstroGuru + Add-ons
 // ============================================================
 
 // ── Boot Payload ─────────────────────────────────────────
 export interface BootPayload {
-  v: number;                      // schema version — bump to force client cache bust
+  v: number;
   config: SiteConfig;
   services: Service[];
   pricing: PricingTier[];
   testimonials: Testimonial[];
   faqs: FAQ[];
   content: PageContent;
+  addons?: Addon[];          // ← NEW
 }
 
 export interface SiteConfig {
   siteName: string;
   tagline: string;
   adminEmail: string;
-  timezone: string;               // IANA, e.g. "Asia/Kolkata"
+  timezone: string;
   currencySymbol: string;
-  currencyCode: string;           // "INR"
+  currencyCode: string;
   whatsapp: WhatsAppConfig;
   urgency: UrgencyConfig;
-  calendarMap: Record<string, string>; // serviceId → googleCalendarId
+  calendarMap: Record<string, string>;
 }
 
 export interface WhatsAppConfig {
   enabled: boolean;
-  number: string;                 // E.164 format without "+"
+  number: string;
   buttonText: string;
   position: 'bottom-right' | 'bottom-left';
   defaultMessage: string;
@@ -36,10 +37,25 @@ export interface WhatsAppConfig {
 
 export interface UrgencyConfig {
   enabled: boolean;
-  slotsLeftText: string;          // "Only {n} slot(s) left this week"
+  slotsLeftText: string;
   responseTimeHours: number;
   promoText: string;
-  countdownEndTime: string;       // ISO datetime string UTC
+  countdownEndTime: string;
+}
+
+// ── Add-ons ───────────────────────────────────────────────
+export interface Addon {
+  id: string;
+  name: string;
+  description: string;
+  price: number;                  // in paise
+  priceDisplay: string;           // "₹199"
+  isActive: boolean;
+  /** serviceIds this add-on applies to; empty = all services */
+  serviceIds: string[];
+  /** add-on ids to auto-select for "Most Popular" tiers */
+  popularDefault: boolean;
+  order: number;
 }
 
 // ── Services ─────────────────────────────────────────────
@@ -60,9 +76,9 @@ export interface Service {
 export interface PricingTier {
   id: string;
   serviceId: string;
-  label: string;                  // e.g. "Birth Chart Reading"
-  price: number;                  // in smallest currency unit (paise for INR)
-  priceDisplay: string;           // "₹1,500" — formatted by backend
+  label: string;
+  price: number;
+  priceDisplay: string;
   isPopular: boolean;
   features: string[];
   ctaText: string;
@@ -78,7 +94,7 @@ export interface PageContent {
   };
   about: {
     title: string;
-    body: string;                 // may contain basic markdown
+    body: string;
     credentials: string[];
     yearsExperience: number;
     clientsServed: number;
@@ -100,7 +116,7 @@ export interface Testimonial {
   name: string;
   city: string;
   service: string;
-  rating: number;                 // 1-5
+  rating: number;
   body: string;
   avatarInitials: string;
   createdAt: string;
@@ -118,23 +134,22 @@ export interface Slot {
   id: string;
   serviceId: string;
   serviceName: string;
-  startUtc: string;               // ISO 8601 UTC
+  startUtc: string;
   endUtc: string;
   durationMinutes: number;
   status: 'available' | 'locked' | 'booked' | 'disabled';
-  lockExpiresAt?: string;         // UTC — null if not locked
+  lockExpiresAt?: string;
 }
 
-// Transformed slot for display
 export interface SlotDisplay extends Slot {
   startLocal: Date;
   endLocal: Date;
-  dayKey: string;                 // "2025-01-15"
-  timeLabel: string;              // "10:30 AM"
+  dayKey: string;
+  timeLabel: string;
 }
 
 // ── Booking ───────────────────────────────────────────────
-export type BookingStep = 'form' | 'otp' | 'payment' | 'success' | 'birth-details';
+export type BookingStep = 'form' | 'addons' | 'otp' | 'payment' | 'success' | 'birth-details';
 
 export interface BookingFormData {
   name: string;
@@ -143,8 +158,8 @@ export interface BookingFormData {
 }
 
 export interface BirthDetailsData {
-  dateOfBirth: string;            // "YYYY-MM-DD"
-  timeOfBirth: string;            // "HH:MM" (24h) or "unknown"
+  dateOfBirth: string;
+  timeOfBirth: string;
   cityOfBirth: string;
   additionalNotes?: string;
 }
@@ -203,7 +218,6 @@ export interface ApiError {
 
 export type ApiResult<T> = ApiSuccess<T> | ApiError;
 
-// Lock/Unlock responses
 export interface LockResult {
   lockToken: string;
   lockExpiresAt: string;
@@ -218,9 +232,9 @@ export interface ConfirmResult {
 // ── Admin ─────────────────────────────────────────────────
 export interface SlotTemplate {
   serviceId: string;
-  startDate: string;              // "YYYY-MM-DD"
+  startDate: string;
   endDate: string;
-  startTime: string;              // "HH:MM" 24h
+  startTime: string;
   durationMinutes: number;
-  weekdays: number[];             // 0=Sun, 1=Mon, ..., 6=Sat
+  weekdays: number[];
 }

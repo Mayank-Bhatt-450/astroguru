@@ -1,89 +1,130 @@
 ---
 // src/layouts/AdminLayout.astro
-export interface Props {
+// AstroGuru Admin — includes Add-ons tab in sidebar
+interface Props {
   title?: string;
-  activeSection?: string;
+  activeTab?: string;
 }
-const { title = 'Admin Panel', activeSection = 'dashboard' } = Astro.props;
+const {
+  title     = 'Admin — AstroGuru',
+  activeTab = 'dashboard',
+} = Astro.props;
 
-const nav = [
-  { id: 'dashboard',      icon: '▦',  label: 'Dashboard',       href: '/admin' },
-  { id: 'bookings',       icon: '📅', label: 'Bookings',        href: '/admin/bookings' },
-  { id: 'slots',          icon: '⏰', label: 'Manage Slots',    href: '/admin/slots' },
-  { id: 'quick-consults',  icon: '⚡', label: 'Quick Consults', href: '/admin/quick-consults' },
-  { id: 'content',        icon: '✏️', label: 'Content Manager', href: '/admin/content' },
-  { id: 'settings',       icon: '⚙️', label: 'Settings',        href: '/admin/settings' },
+const tabs = [
+  { id: 'dashboard',   href: '/admin',                icon: '📊', label: 'Dashboard' },
+  { id: 'slots',       href: '/admin/slots',          icon: '🗓', label: 'Manage Slots' },
+  { id: 'bookings',    href: '/admin/bookings',       icon: '📋', label: 'Bookings' },
+  { id: 'addons',      href: '/admin/addons',         icon: '✦',  label: 'Add-ons' },
+  { id: 'content',     href: '/admin/content',        icon: '✏️', label: 'Content' },
+  { id: 'quick',       href: '/admin/quick-consults', icon: '⚡', label: 'Quick Consults' },
+  { id: 'settings',    href: '/admin/settings',       icon: '⚙️', label: 'Settings' },
 ];
 ---
-
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{title} — Jyotish Admin</title>
-  <meta name="robots" content="noindex, nofollow" />
+  <title>{title}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles/global.css" />
 </head>
-<body style="background:var(--color-fog);">
+<body style="background:var(--color-fog); min-height:100dvh;">
 
-<div class="admin-layout">
+  <!-- Mobile admin header -->
+  <header style="
+    position:sticky; top:0; z-index:50;
+    background:var(--color-midnight-ink); color:white;
+    padding:14px clamp(16px,4vw,24px);
+    display:flex; align-items:center; justify-content:space-between;
+  ">
+    <a href="/" style="display:flex; align-items:center; gap:8px; color:white; font-family:var(--font-display); font-weight:700; font-size:1.1rem;">
+      <span style="color:var(--color-lavender-mist);">✦</span> AstroGuru
+    </a>
+    <span style="font-size:12px; color:rgba(255,255,255,0.5); font-weight:600; letter-spacing:0.08em; text-transform:uppercase;">Admin</span>
 
-  <!-- Sidebar -->
-  <aside class="admin-sidebar" id="adminSidebar">
-    <div class="admin-sidebar-header">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <div style="width:28px;height:28px;background:var(--color-voltage-violet);border-radius:8px;display:flex;align-items:center;justify-content:center;color:white;font-size:14px;">✦</div>
-        <span style="font-weight:700;font-size:15px;color:var(--color-midnight-ink);">Jyotish Admin</span>
-      </div>
-    </div>
+    <!-- Mobile menu toggle -->
+    <button id="admin-menu-toggle"
+      style="display:none; background:none; border:none; color:white; cursor:pointer; padding:4px;"
+      aria-label="Toggle menu">
+      ☰
+    </button>
+  </header>
 
-    <nav class="admin-nav">
-      {nav.map(item => (
-        <a href={item.href} class={`admin-nav-item ${activeSection === item.id ? 'active' : ''}`}>
-          <span style="font-size:15px;">{item.icon}</span>
-          {item.label}
+  <div style="display:flex; min-height:calc(100dvh - 57px);">
+
+    <!-- ── Sidebar ── -->
+    <aside id="admin-sidebar" style="
+      width: 220px; flex-shrink:0;
+      background: var(--color-midnight-ink);
+      padding: 20px 0;
+      min-height: 100%;
+    ">
+      <nav role="navigation" aria-label="Admin navigation">
+        {tabs.map(tab => (
+          <a
+            href={tab.href}
+            style={`
+              display: flex; align-items: center; gap: 10px;
+              padding: 11px 20px;
+              font-size: 14px; font-weight: 500;
+              color: ${activeTab === tab.id ? 'white' : 'rgba(255,255,255,0.55)'};
+              background: ${activeTab === tab.id ? 'rgba(124,58,237,0.3)' : 'transparent'};
+              border-left: 3px solid ${activeTab === tab.id ? 'var(--color-voltage-violet)' : 'transparent'};
+              transition: all 0.15s;
+              text-decoration: none;
+            `}
+            aria-current={activeTab === tab.id ? 'page' : undefined}
+          >
+            <span style="font-size:15px; width:20px; text-align:center;">{tab.icon}</span>
+            {tab.label}
+          </a>
+        ))}
+      </nav>
+
+      <div style="margin-top:auto; padding: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+        <a href="/" style="font-size:12px; color:rgba(255,255,255,0.4); display:flex; align-items:center; gap:6px;">
+          ← Back to site
         </a>
-      ))}
-    </nav>
-
-    <div style="padding:12px 8px;border-top:1px solid var(--color-mist);">
-      <a href="/" class="admin-nav-item" style="opacity:0.6;font-size:13px;">
-        ← Back to Site
-      </a>
-    </div>
-  </aside>
-
-  <!-- Main -->
-  <div class="admin-content">
-    <div class="admin-topbar">
-      <h1 style="font-family:var(--font-display);font-size:22px;font-weight:600;color:var(--color-midnight-ink);">{title}</h1>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <span class="badge badge-violet">Admin</span>
-        <button
-          id="clearCacheBtn"
-          class="btn btn-ghost"
-          style="padding:8px 16px;font-size:13px;"
-        >
-          ↺ Clear Cache
-        </button>
       </div>
-    </div>
+    </aside>
 
-    <slot />
+    <!-- ── Main content ── -->
+    <main style="flex:1; padding:clamp(20px,4vw,36px); overflow-x:hidden; min-width:0;">
+      <slot />
+    </main>
   </div>
 
-</div>
+  <!-- Mobile sidebar handling -->
+  <style>
+    @media (max-width: 768px) {
+      #admin-menu-toggle { display: block !important; }
+      #admin-sidebar {
+        position: fixed;
+        top: 57px; left: 0; bottom: 0;
+        z-index: 200;
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+        width: 240px !important;
+      }
+      #admin-sidebar.open { transform: translateX(0); }
+    }
+  </style>
 
-<script>
-  document.getElementById('clearCacheBtn')?.addEventListener('click', () => {
-    const cleared = Object.keys(localStorage).filter(k => k.startsWith('jy_'));
-    cleared.forEach(k => localStorage.removeItem(k));
-    alert(`Cache cleared (${cleared.length} item${cleared.length !== 1 ? 's' : ''}). Reload the site to fetch fresh data.`);
-  });
-</script>
+  <script>
+    const toggle  = document.getElementById('admin-menu-toggle');
+    const sidebar = document.getElementById('admin-sidebar');
+    toggle?.addEventListener('click', () => {
+      sidebar?.classList.toggle('open');
+    });
+    document.addEventListener('click', (e) => {
+      if (!sidebar?.contains(e.target as Node) && !toggle?.contains(e.target as Node)) {
+        sidebar?.classList.remove('open');
+      }
+    });
+  </script>
 
 </body>
 </html>
