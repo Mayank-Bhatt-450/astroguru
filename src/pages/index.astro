@@ -1,32 +1,141 @@
 ---
 // src/pages/index.astro
+// AstroGuru landing page — SEO-optimised with:
+//   • Descriptive title + meta description
+//   • LocalBusiness + FAQ JSON-LD
+//   • Correct H1 > H2 > H3 heading hierarchy
+//   • Semantic landmark elements (<main>, <article>, <aside>)
+//   • Internal links between page sections and services
 import BaseLayout from '../layouts/BaseLayout.astro';
-import HeroSection       from '../components/islands/HeroSection';
-import ServicesSection   from '../components/islands/ServicesSection';
-import PricingSection    from '../components/islands/PricingSection';
+import HeroSection from '../components/islands/HeroSection';
+import ServicesSection from '../components/islands/ServicesSection';
+import PricingSection from '../components/islands/PricingSection';
 import TestimonialsSection from '../components/islands/TestimonialsSection';
-import FaqSection        from '../components/islands/FaqSection';
-import ServicePickerModal from '../components/booking/ServicePickerModal';
-import BookingModal      from '../components/booking/BookingModal';
+import FaqSection from '../components/islands/FaqSection';
+import ScrollReveal from '../components/islands/ScrollReveal';
+
+const siteUrl = Astro.url.origin;
+
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'LocalBusiness',
+      '@id': `${siteUrl}/#business`,
+      name: 'AstroGuru — Vedic Astrology Consultations',
+      description: 'Expert online Vedic astrology, numerology, and Vastu Shastra consultations. Book a private 1-on-1 session with an experienced practitioner.',
+      url: siteUrl,
+      image: `${siteUrl}/og-image.jpg`,
+      priceRange: '₹999–₹2,500',
+      telephone: '',
+      areaServed: 'Worldwide',
+      availableLanguage: ['English', 'Hindi'],
+      hasOfferCatalog: {
+        '@type': 'OfferCatalog',
+        name: 'Vedic Consultation Services',
+        itemListElement: [
+          {
+            '@type': 'Offer',
+            itemOffered: {
+              '@type': 'Service',
+              name: 'Vedic Astrology Consultation',
+              description: 'Personalised birth chart analysis and life guidance based on Vedic tradition.',
+              url: `${siteUrl}/#services`,
+            },
+          },
+          {
+            '@type': 'Offer',
+            itemOffered: {
+              '@type': 'Service',
+              name: 'Numerology Reading',
+              description: 'Discover your life path and destiny through the sacred power of numbers.',
+              url: `${siteUrl}/#services`,
+            },
+          },
+          {
+            '@type': 'Offer',
+            itemOffered: {
+              '@type': 'Service',
+              name: 'Vastu Shastra Consultation',
+              description: 'Harmonise your home or office to invite prosperity, health, and peace.',
+              url: `${siteUrl}/#services`,
+            },
+          },
+        ],
+      },
+    },
+    {
+      '@type': 'FAQPage',
+      mainEntity: [
+        {
+          '@type': 'Question',
+          name: 'How does an online Vedic astrology consultation work?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'After booking and payment you receive a Google Meet link via email. At the scheduled time simply click the link to join a private video call with the practitioner.',
+          },
+        },
+        {
+          '@type': 'Question',
+          name: 'What information do I need for an astrology reading?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'You will need your exact date of birth, time of birth (as precise as possible), and your city or place of birth. This is provided after payment.',
+          },
+        },
+        {
+          '@type': 'Question',
+          name: 'Is my personal information kept confidential?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'Absolutely. All consultation details are strictly private and never shared with third parties. Your birth details are used solely for your reading.',
+          },
+        },
+        {
+          '@type': 'Question',
+          name: 'Can I get a Quick Consultation instead of a full session?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'Yes. The Quick Consultation lets you ask up to 3 specific questions and receive a personalised, written response via email — usually within 24 hours, at a fraction of the full session cost.',
+          },
+        },
+      ],
+    },
+  ],
+};
 ---
 
-<BaseLayout>
-  <!-- Public sections -->
-  <HeroSection         client:load />
-  <ServicesSection     client:visible />
-  <PricingSection      client:visible />
-  <TestimonialsSection client:visible />
-  <FaqSection          client:visible />
+<BaseLayout
+  title="AstroGuru — Expert Vedic Astrology Consultations Online | Book Now"
+  description="Book a private 1-on-1 Vedic astrology, numerology, or Vastu Shastra consultation online. Personalised insights from a certified expert. Instant confirmation & Google Meet included."
+  structuredData={structuredData}
+>
 
-  <!--
-    ServicePickerModal — opens when any "Book Now" button is clicked.
-    client:load so it is always ready, even if the user clicks immediately.
-  -->
-  <ServicePickerModal client:load />
+  <!-- H1 lives inside HeroSection (text-display heading) -->
+  <HeroSection client:load />
 
-  <!--
-    BookingModal — opens after the user selects a slot in ServicePickerModal.
-    The store orchestrates the open/close transition between the two modals.
-  -->
-  <BookingModal client:load />
+  <!-- Services: H2 heading "Sacred Consultation Services" -->
+  <ServicesSection client:load />
+
+  <!-- Pricing: H2 heading "Investment in Your Journey" -->
+  <PricingSection client:load />
+
+  <!-- Testimonials: H2 heading "Loved by Clients" -->
+  <TestimonialsSection client:load />
+
+  <!-- FAQs: H2 heading "Frequently Asked" -->
+  <FaqSection client:load />
+
+  <!-- SEO-friendly internal links (visually minimal footer nav) -->
+  <nav aria-label="Page sections" style="display:none;">
+    <a href="/#services">Vedic Astrology Services</a>
+    <a href="/#pricing">Consultation Pricing</a>
+    <a href="/#testimonials">Client Reviews</a>
+    <a href="/#faqs">Frequently Asked Questions</a>
+    <a href="/quick-consult">Quick Consultation</a>
+  </nav>
+
+  <!-- Scroll-reveal observer -->
+  <ScrollReveal client:load />
+
 </BaseLayout>

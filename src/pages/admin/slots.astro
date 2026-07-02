@@ -3,15 +3,15 @@
 import AdminLayout from '../../layouts/AdminLayout.astro';
 import AdminSlotManager from '../../components/admin/AdminSlotManager';
 ---
-
 <AdminLayout title="Manage Slots" activeSection="slots">
-  <!-- Pass services from server or let the component fetch them -->
+  <h1 class="admin-section-title">Manage Slots</h1>
+  <p class="admin-section-desc">Create, enable, disable or delete consultation slots.</p>
   <AdminSlotManager
     client:load
     services={[
-      { id: 'astrology',    name: 'Astrology',    iconEmoji: '☽' },
-      { id: 'numerology',   name: 'Numerology',   iconEmoji: '🔢' },
-      { id: 'vastu',        name: 'Vastu Shastra', iconEmoji: '🏠' },
+      { id: 'astrology',  name: 'Astrology',     iconEmoji: '☽' },
+      { id: 'numerology', name: 'Numerology',    iconEmoji: '🔢' },
+      { id: 'vastu',      name: 'Vastu Shastra', iconEmoji: '🏠' },
     ]}
   />
 </AdminLayout>

@@ -1,14 +1,35 @@
 // src/components/islands/FaqSection.tsx
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAppStore, selectFaqs } from '../../stores/appStore';
 
 export default function FaqSection() {
   const bootStatus = useAppStore(s => s.bootStatus);
   const faqs       = useAppStore(selectFaqs).sort((a, b) => a.order - b.order);
   const [openId, setOpenId] = useState<string | null>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (bootStatus !== 'ready') return;
+    const el = sectionRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      entries => entries.forEach(e => {
+        if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); }
+      }),
+      { threshold: 0.08, rootMargin: '0px 0px -20px 0px' }
+    );
+    const t = setTimeout(() => {
+      el.querySelectorAll('.animate-on-scroll').forEach(node => {
+        const rect = node.getBoundingClientRect();
+        if (rect.top < window.innerHeight) node.classList.add('visible');
+        else observer.observe(node);
+      });
+    }, 50);
+    return () => { clearTimeout(t); observer.disconnect(); };
+  }, [bootStatus]);
 
   return (
-    <section className="section" id="faqs" style={{ background: 'var(--color-fog)' }}>
+    <section ref={sectionRef} className="section" id="faqs" style={{ background: 'var(--color-fog)' }}>
       <div className="container" style={{ maxWidth: 720 }}>
         <div className="text-center mb-48 animate-on-scroll">
           <p className="eyebrow mb-12">Have Questions?</p>

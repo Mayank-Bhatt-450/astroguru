@@ -1,5 +1,5 @@
 // src/components/islands/PricingSection.tsx
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAppStore, selectPricing, selectServices } from '../../stores/appStore';
 
 export default function PricingSection() {
@@ -8,12 +8,34 @@ export default function PricingSection() {
   const services          = useAppStore(selectServices).filter(s => s.isActive);
   const openServicePicker = useAppStore(s => s.openServicePicker);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const sectionRef = useRef<HTMLElement>(null);
 
   const displayId      = activeId ?? services[0]?.id ?? null;
   const displayPricing = displayId ? pricing.filter(p => p.serviceId === displayId) : pricing;
 
+  // Re-observe after data loads — same pattern as ServicesSection
+  useEffect(() => {
+    if (bootStatus !== 'ready') return;
+    const el = sectionRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      entries => entries.forEach(e => {
+        if (e.isIntersecting) { e.target.classList.add('visible'); observer.unobserve(e.target); }
+      }),
+      { threshold: 0.08, rootMargin: '0px 0px -20px 0px' }
+    );
+    const t = setTimeout(() => {
+      el.querySelectorAll('.animate-on-scroll').forEach(node => {
+        const rect = node.getBoundingClientRect();
+        if (rect.top < window.innerHeight) node.classList.add('visible');
+        else observer.observe(node);
+      });
+    }, 50);
+    return () => { clearTimeout(t); observer.disconnect(); };
+  }, [bootStatus]);
+
   return (
-    <section className="section" id="pricing" style={{ background: 'var(--color-lavender-field)' }}>
+    <section ref={sectionRef} className="section" id="pricing" style={{ background: 'var(--color-lavender-field)' }}>
       <div className="container">
         <div className="text-center mb-48 animate-on-scroll">
           <p className="eyebrow eyebrow-dark mb-12">Transparent Pricing</p>
@@ -21,7 +43,6 @@ export default function PricingSection() {
           <div className="divider-violet" />
         </div>
 
-        {/* Service tabs */}
         {bootStatus === 'ready' && services.length > 1 && (
           <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 36, flexWrap: 'wrap' }}>
             {services.map(svc => (
@@ -37,7 +58,6 @@ export default function PricingSection() {
           </div>
         )}
 
-        {/* Loading */}
         {bootStatus === 'loading' && (
           <div className="grid-3">
             {[1,2,3].map(i => (
@@ -46,14 +66,12 @@ export default function PricingSection() {
           </div>
         )}
 
-        {/* Error */}
         {bootStatus === 'error' && (
           <div className="banner banner-error" style={{ maxWidth: 480, margin: '0 auto' }}>
             Could not load pricing. Please refresh.
           </div>
         )}
 
-        {/* Pricing cards */}
         {bootStatus === 'ready' && (
           <div className="pricing-grid animate-on-scroll" style={{
             display: 'grid',
@@ -71,7 +89,7 @@ export default function PricingSection() {
                   display: 'flex', flexDirection: 'column', gap: 20,
                   boxShadow: tier.isPopular ? '0 24px 60px rgba(17,24,39,0.25)' : 'none',
                   transform: tier.isPopular ? 'scale(1.02)' : 'none',
-                  animationDelay: `${i * 0.08}s`,
+                  transitionDelay: `${i * 0.08}s`,
                 }}
               >
                 {tier.isPopular && (
@@ -85,7 +103,6 @@ export default function PricingSection() {
                     ✦ Most Popular
                   </div>
                 )}
-
                 <div>
                   <h3 style={{
                     fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, marginBottom: 12,
@@ -101,7 +118,6 @@ export default function PricingSection() {
                     {tier.priceDisplay}
                   </div>
                 </div>
-
                 <ul style={{ listStyle: 'none', padding: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {(tier.features as string[]).map((f, fi) => (
                     <li key={fi} style={{
@@ -116,7 +132,6 @@ export default function PricingSection() {
                     </li>
                   ))}
                 </ul>
-
                 <button
                   className={`btn ${tier.isPopular ? 'btn-primary' : 'btn-dark'}`}
                   style={{ justifyContent: 'center', fontSize: 15 }}

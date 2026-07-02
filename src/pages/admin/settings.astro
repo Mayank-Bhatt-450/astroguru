@@ -4,5 +4,7 @@ import AdminLayout from '../../layouts/AdminLayout.astro';
 import AdminSettings from '../../components/admin/AdminSettings';
 ---
 <AdminLayout title="Settings" activeSection="settings">
+  <h1 class="admin-section-title">Settings</h1>
+  <p class="admin-section-desc">Configure WhatsApp, urgency messaging, and site preferences.</p>
   <AdminSettings client:load />
 </AdminLayout>

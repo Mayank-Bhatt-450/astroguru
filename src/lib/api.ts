@@ -129,6 +129,7 @@ export async function confirmBooking(params: {
   bookingId: string; slotId: string; lockToken: string;
   razorpayPaymentId: string; razorpayOrderId: string; razorpaySignature: string;
   name: string; email: string; phone: string; serviceId: string;
+  addonIds?: string[];
 }): Promise<ApiResult<ConfirmResult>> {
   return gasRequest<ConfirmResult>('confirmBooking', params, 'POST');
 }
@@ -191,6 +192,7 @@ export async function submitQuickConsult(
 // ── Razorpay ──────────────────────────────────────────────
 export async function createRazorpayOrder(params: {
   amount: number; currency: string; receipt: string; serviceId: string; email: string;
+  addonIds?: string[];
 }): Promise<ApiResult<{ orderId: string; amount: number; currency: string; keyId: string }>> {
   return gasRequest<{ orderId: string; amount: number; currency: string; keyId: string }>(
     'createRazorpayOrder', params, 'POST'

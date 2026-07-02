@@ -3,7 +3,8 @@
 import AdminLayout from '../../layouts/AdminLayout.astro';
 import AdminDashboard from '../../components/admin/AdminDashboard';
 ---
-
 <AdminLayout title="Dashboard" activeSection="dashboard">
+  <h1 class="admin-section-title">Dashboard</h1>
+  <p class="admin-section-desc">Last 30 days of booking activity.</p>
   <AdminDashboard client:load />
 </AdminLayout>

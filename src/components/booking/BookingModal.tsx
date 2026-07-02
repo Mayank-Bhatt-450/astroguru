@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { useAppStore, selectConfig, selectAddons } from '../../stores/appStore';
 import { otpService } from '../../services/otp';
 import { initiatePayment } from '../../services/payment';
-import { checkSlotAvailability, submitBirthDetails, devConfirmBooking } from '../../lib/api';
+import { checkSlotAvailability, submitBirthDetails, devConfirmBooking, confirmBooking, releaseSlot } from '../../lib/api';
 import { formatSlotDuration } from '../../lib/slots';
 import { SKIP_PAYMENT } from '../../lib/flags';
 import type { BookingFormData, BirthDetailsData, ConfirmResult } from '../../lib/types';
@@ -379,19 +379,50 @@ function RealPaymentStep({ onSuccess, onFailed }: { onSuccess: (r: ConfirmResult
       serviceId:   selectedService.id,
       amount:      totalPrice,
       currency:    config?.currencyCode || 'INR',
-      bookingId,
-      slotId:      selectedSlot.id,
-      lockToken,
+      receiptId:   bookingId,
       name:        bookingForm.name,
       email:       bookingForm.email,
       phone:       bookingForm.phone,
       description: `${selectedService.name} — ${selectedSlot.timeLabel}`,
       siteName:    config?.siteName || 'AstroGuru',
+      addonIds:    selectedAddonIds,
+      notes:       { bookingId, slotId: selectedSlot.id },
+      onDismiss:   async () => {
+        // User closed the checkout — release the lock so the slot frees up
+        await releaseSlot(selectedSlot.id, lockToken);
+        slotsCache.invalidateAll();
+      },
     });
-    setPaying(false);
-    if (result.status === 'success')    { slotsCache.invalidateAll(); onSuccess(result.confirm); }
-    else if (result.status === 'dismissed') { /* slot still locked */ }
-    else { onFailed(result.error); }
+
+    if (result.status === 'success') {
+      // Payment succeeded — now confirm the booking on the backend
+      const confirmResult = await confirmBooking({
+        bookingId,
+        slotId: selectedSlot.id,
+        lockToken,
+        razorpayPaymentId: result.razorpayPaymentId,
+        razorpayOrderId:   result.razorpayOrderId,
+        razorpaySignature: result.razorpaySignature,
+        name:      bookingForm.name,
+        email:     bookingForm.email,
+        phone:     bookingForm.phone,
+        serviceId: selectedService.id,
+        addonIds:  selectedAddonIds,
+      });
+      setPaying(false);
+      if (confirmResult.ok) {
+        slotsCache.invalidateAll();
+        onSuccess(confirmResult.data);
+      } else {
+        onFailed(confirmResult.error);
+      }
+    } else if (result.status === 'dismissed') {
+      setPaying(false);
+      /* slot lock already released via onDismiss */
+    } else {
+      setPaying(false);
+      onFailed(result.error);
+    }
   };
 
   return (
@@ -561,7 +592,7 @@ export default function BookingModal() {
   const handleLockExpired = useCallback(async () => {
     setLockExpiredBanner(true);
     if (selectedSlot && lockToken) {
-      try { await import('../../lib/api').then(a => a.releaseSlot(selectedSlot.id, lockToken)); } catch { /* noop */ }
+      try { await releaseSlot(selectedSlot.id, lockToken); } catch { /* noop */ }
     }
     setTimeout(async () => {
       setLockExpiredBanner(false);

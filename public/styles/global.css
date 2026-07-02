@@ -1,6 +1,6 @@
 /* src/styles/global.css
    AstroGuru — full design system
-   Includes: animations, mobile responsiveness, add-ons styles
+   Includes: animations, mobile responsiveness, add-ons styles, SEO, admin fixes
 */
 
 /* ── Tokens ──────────────────────────────────────────────── */
@@ -103,15 +103,10 @@ button { font-family: inherit; }
   margin: 0 auto;
 }
 @media (max-width: 700px) {
-  .stats-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 400px) {
-  .stats-grid {
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
+  .stats-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
 }
 
 /* ── Cards ───────────────────────────────────────────────── */
@@ -133,11 +128,7 @@ button { font-family: inherit; }
   transform: translateY(-4px);
   box-shadow: var(--shadow-card);
 }
-.stat-card {
-  text-align: center;
-  padding: 20px 16px;
-  box-shadow: var(--shadow-card);
-}
+.stat-card { text-align: center; padding: 20px 16px; box-shadow: var(--shadow-card); }
 
 /* ── Buttons ─────────────────────────────────────────────── */
 .btn {
@@ -185,10 +176,8 @@ button { font-family: inherit; }
 .btn-nav { padding: 10px 22px; font-size: 14px; }
 .w-full { width: 100%; }
 
-/* Hero CTA pulse animation */
-.btn-hero-pulse {
-  animation: hero-pulse 3s ease-in-out infinite;
-}
+/* Hero CTA pulse */
+.btn-hero-pulse { animation: hero-pulse 3s ease-in-out infinite; }
 @keyframes hero-pulse {
   0%, 100% { box-shadow: 0 4px 20px rgba(124,58,237,0.28); }
   50%       { box-shadow: 0 8px 40px rgba(124,58,237,0.50); }
@@ -250,7 +239,9 @@ button { font-family: inherit; }
 
 /* ── Text helpers ────────────────────────────────────────── */
 .text-center { text-align: center; }
+.mb-10  { margin-bottom: 10px; }
 .mb-12  { margin-bottom: 12px; }
+.mb-14  { margin-bottom: 14px; }
 .mb-16  { margin-bottom: 16px; }
 .mb-20  { margin-bottom: 20px; }
 .mb-24  { margin-bottom: 24px; }
@@ -281,14 +272,16 @@ button { font-family: inherit; }
 }
 
 /* ── Orbs / backgrounds ──────────────────────────────────── */
-.orb-container { position: relative; }
+.orb-container { position: relative; overflow: hidden; }
 .orb {
   position: absolute; border-radius: 50%; pointer-events: none;
   filter: blur(72px);
+  /* Ensure orbs are always behind content */
+  z-index: 0;
 }
-.orb-violet { background: radial-gradient(circle, #c4b5fd, #8b5cf6); }
-.orb-pink   { background: radial-gradient(circle, #fbcfe8, #f472b6); }
-.orb-amber  { background: radial-gradient(circle, #fde68a, #fbbf24); }
+.orb-violet   { background: radial-gradient(circle, #c4b5fd, #8b5cf6); }
+.orb-pink     { background: radial-gradient(circle, #fbcfe8, #f472b6); }
+.orb-amber    { background: radial-gradient(circle, #fde68a, #fbbf24); }
 .orb-lavender { background: radial-gradient(circle, #ede9fe, #c4b5fd); }
 
 /* Orb drift animations */
@@ -304,18 +297,44 @@ button { font-family: inherit; }
 .orb-drift      { animation: orb-drift 14s ease-in-out infinite; }
 .orb-drift-slow { animation: orb-drift-slow 20s ease-in-out infinite; }
 
+/* ── Hero constellation animation ────────────────────────── */
+.hero-canvas-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.hero-canvas-wrap canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+/* Always keep hero text above the canvas */
+.hero-content-wrap {
+  position: relative;
+  z-index: 1;
+}
+
 /* ── Scroll-reveal animation ─────────────────────────────── */
 .animate-on-scroll {
   opacity: 0;
-  transform: translateY(28px);
-  transition: opacity 0.65s ease, transform 0.65s ease;
+  transform: translateY(24px);
+  transition: opacity 0.55s ease, transform 0.55s ease;
 }
 .animate-on-scroll.visible {
   opacity: 1;
   transform: translateY(0);
 }
+/* Fallback: if JS never runs or takes too long, show content after 2s */
+@keyframes reveal-fallback {
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-on-scroll {
+  animation: reveal-fallback 0s 2s forwards;
+}
 
-/* ── Float animation (success screen) ───────────────────── */
+/* ── Float animation ─────────────────────────────────────── */
 @keyframes float {
   0%, 100% { transform: translateY(0); }
   50%       { transform: translateY(-10px); }
@@ -375,28 +394,52 @@ button { font-family: inherit; }
   background: var(--color-graphite); border-radius: 2px;
   transition: all 0.2s;
 }
+
+/* ── Mobile menu — consistent styling for all items ──────── */
 .mobile-menu {
   display: none;
   flex-direction: column;
   background: white;
   border-top: 1px solid var(--color-mist);
-  padding: 16px clamp(16px, 4vw, 48px) 20px;
-  gap: 4px;
+  padding: 8px clamp(16px, 4vw, 48px) 16px;
+  gap: 0;
 }
-.mobile-menu a, .mobile-menu button {
-  display: block; padding: 12px 0;
-  font-size: 15px; font-weight: 500; color: var(--color-graphite);
-  border: none; background: none; cursor: pointer; text-align: left;
+/* All links inside mobile-menu look the same */
+.mobile-menu a {
+  display: block;
+  padding: 13px 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--color-graphite);
   border-bottom: 1px solid var(--color-mist);
+  text-decoration: none;
+  transition: color var(--transition-base);
   width: 100%;
 }
-.mobile-menu a:last-child, .mobile-menu button:last-child { border-bottom: none; }
-.mobile-menu a:hover, .mobile-menu button:hover { color: var(--color-voltage-violet); }
+.mobile-menu a:hover { color: var(--color-voltage-violet); }
+/* Book a Session button in mobile nav: plain text style like other links */
+.mobile-menu .mobile-book-btn {
+  display: block;
+  width: 100%;
+  padding: 13px 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--color-graphite);
+  background: none;
+  border: none;
+  border-bottom: none; /* last item */
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-body);
+  transition: color var(--transition-base);
+}
+.mobile-menu .mobile-book-btn:hover { color: var(--color-voltage-violet); }
 
 @media (max-width: 768px) {
-  .nav-links  { display: none; }
+  .nav-links    { display: none; }
   .nav-hamburger { display: flex; }
   .mobile-menu.open { display: flex; }
+  .hide-mobile  { display: none !important; }
 }
 
 /* ── Modal ───────────────────────────────────────────────── */
@@ -431,15 +474,8 @@ button { font-family: inherit; }
 
 /* Bottom-sheet on mobile */
 @media (max-width: 560px) {
-  .modal-overlay {
-    align-items: flex-end;
-    padding: 0;
-  }
-  .modal-panel {
-    border-radius: 24px 24px 0 0;
-    max-height: 94dvh;
-    max-width: 100%;
-  }
+  .modal-overlay { align-items: flex-end; padding: 0; }
+  .modal-panel   { border-radius: 24px 24px 0 0; max-height: 94dvh; max-width: 100%; }
 }
 
 /* ── Steps bar ───────────────────────────────────────────── */
@@ -460,9 +496,7 @@ button { font-family: inherit; }
   background: var(--color-voltage-violet); border-color: var(--color-voltage-violet);
   color: white; box-shadow: 0 0 0 4px rgba(124,58,237,0.15);
 }
-.step-node.done {
-  background: #10b981; border-color: #10b981; color: white;
-}
+.step-node.done { background: #10b981; border-color: #10b981; color: white; }
 .step-connector {
   flex: 1; height: 2px; margin: 0 4px;
   background: var(--color-mist); min-width: 12px;
@@ -470,7 +504,7 @@ button { font-family: inherit; }
 }
 .step-connector.done { background: #10b981; }
 
-/* ── Service picker bottom-sheet ─────────────────────────── */
+/* ── Service picker ──────────────────────────────────────── */
 .picker-overlay {
   position: fixed; inset: 0; z-index: 400;
   background: rgba(17,24,39,0.55);
@@ -528,15 +562,31 @@ button { font-family: inherit; }
   background: rgba(124,58,237,0.12); color: var(--color-voltage-violet);
   border-radius: 999px;
 }
-.day-chip.active .day-chip-count {
-  background: rgba(255,255,255,0.2); color: white;
-}
+.day-chip.active .day-chip-count { background: rgba(255,255,255,0.2); color: white; }
 
 /* ── Time chips ──────────────────────────────────────────── */
-.time-chips {
-  display: flex; flex-wrap: wrap; gap: 10px;
-  margin-top: 16px;
+.time-chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.time-chip {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: 1.5px solid var(--color-mist);
+  background: white;
+  font-size: 13px; font-weight: 600;
+  color: var(--color-graphite);
+  cursor: pointer;
+  transition: all var(--transition-base);
 }
+.time-chip:hover:not(:disabled) {
+  border-color: var(--color-voltage-violet);
+  background: var(--color-lavender-field);
+  color: var(--color-voltage-violet);
+}
+.time-chip.selected {
+  background: var(--color-voltage-violet);
+  border-color: var(--color-voltage-violet);
+  color: white;
+}
+.time-chip.booked { opacity: 0.4; cursor: not-allowed; }
 
 /* ── Forms ───────────────────────────────────────────────── */
 .form-group   { display: flex; flex-direction: column; gap: 4px; }
@@ -560,10 +610,24 @@ button { font-family: inherit; }
 .form-error { font-size: 12px; color: #ef4444; margin-top: 2px; }
 textarea.form-input { resize: vertical; min-height: 72px; }
 
-/* ── OTP ─────────────────────────────────────────────────── */
-.otp-group {
-  display: flex; gap: 8px; justify-content: center;
+/* Multi-select for admin */
+select[multiple].form-input {
+  height: auto;
+  min-height: 100px;
+  padding: 6px;
 }
+select[multiple].form-input option {
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+select[multiple].form-input option:checked {
+  background: var(--color-voltage-violet);
+  color: white;
+}
+
+/* ── OTP ─────────────────────────────────────────────────── */
+.otp-group { display: flex; gap: 8px; justify-content: center; }
 .otp-digit {
   width: 44px; height: 52px;
   border: 2px solid var(--color-mist);
@@ -648,12 +712,57 @@ textarea.form-input { resize: vertical; min-height: 72px; }
 .admin-table tr:last-child td { border-bottom: none; }
 .admin-table tr:hover td { background: var(--color-fog); }
 
+/* ── Admin panel layout fixes ────────────────────────────── */
+.admin-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+.admin-page-title {
+  font-family: var(--font-display);
+  font-size: clamp(1.3rem, 3vw, 1.8rem);
+  font-weight: 600;
+  color: var(--color-midnight-ink);
+}
+.admin-card {
+  background: white;
+  border: 1px solid var(--color-mist);
+  border-radius: 20px;
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+.admin-card-header {
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--color-mist);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.admin-card-body { padding: 24px; }
+
+/* Stat cards grid */
+.admin-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
 /* ── Mobile: hide non-essential table columns ────────────── */
-@media (max-width: 600px) {
+@media (max-width: 768px) {
   .admin-table th:nth-child(3),
   .admin-table td:nth-child(3),
   .admin-table th:nth-child(5),
   .admin-table td:nth-child(5) { display: none; }
+}
+@media (max-width: 480px) {
+  .admin-table { font-size: 12px; }
+  .admin-table th, .admin-table td { padding: 8px 10px; }
 }
 
 /* ── Footer ──────────────────────────────────────────────── */
@@ -671,14 +780,12 @@ textarea.form-input { resize: vertical; min-height: 72px; }
   padding: 0 clamp(16px, 4vw, 48px);
 }
 @media (max-width: 640px) {
-  .footer-grid {
-    grid-template-columns: 1fr;
-    gap: 32px;
-  }
+  .footer-grid { grid-template-columns: 1fr; gap: 32px; }
 }
 .footer-bottom {
   border-top: 1px solid rgba(255,255,255,0.1);
-  margin-top: 40px; padding-top: 24px;
+  margin-top: 40px;
+  padding-top: 24px;
   display: flex; align-items: center; justify-content: space-between;
   flex-wrap: wrap; gap: 12px;
   max-width: 1140px; margin-left: auto; margin-right: auto;
@@ -687,30 +794,14 @@ textarea.form-input { resize: vertical; min-height: 72px; }
   font-size: 12px;
 }
 
-/* ── Pricing grid mobile ─────────────────────────────────── */
+/* ── Pricing grid ────────────────────────────────────────── */
 @media (max-width: 640px) {
-  .pricing-grid {
-    grid-template-columns: 1fr !important;
-  }
+  .pricing-grid { grid-template-columns: 1fr !important; }
 }
 
-/* ── Testimonials masonry responsive ─────────────────────── */
-@media (max-width: 900px) {
-  .testimonials-masonry { columns: 2 !important; }
-}
-@media (max-width: 540px) {
-  .testimonials-masonry { columns: 1 !important; }
-}
-
-/* ── Scroll-reveal init (JS adds .visible) ───────────────── */
-@media (prefers-reduced-motion: reduce) {
-  .animate-on-scroll {
-    opacity: 1 !important;
-    transform: none !important;
-    transition: none !important;
-  }
-  .orb-drift, .orb-drift-slow, .btn-hero-pulse { animation: none !important; }
-}
+/* ── Testimonials masonry ────────────────────────────────── */
+@media (max-width: 900px) { .testimonials-masonry { columns: 2 !important; } }
+@media (max-width: 540px) { .testimonials-masonry { columns: 1 !important; } }
 
 /* ── Section spacing mobile fix ──────────────────────────── */
 @media (max-width: 480px) {
@@ -718,4 +809,41 @@ textarea.form-input { resize: vertical; min-height: 72px; }
   .section-lg { padding: 52px 0; }
   .mb-48 { margin-bottom: 32px; }
   .card   { padding: 18px; }
+}
+
+/* ── Reduced motion ──────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .animate-on-scroll {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  .orb-drift, .orb-drift-slow, .btn-hero-pulse,
+  .hero-star, .hero-zodiac { animation: none !important; }
+}
+
+/* ── Hero zodiac/star decorative ────────────────────────── */
+@keyframes star-twinkle {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50%       { opacity: 1;   transform: scale(1.25); }
+}
+@keyframes star-float {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50%       { transform: translateY(-8px) rotate(10deg); }
+}
+.hero-star {
+  position: absolute;
+  pointer-events: none;
+  animation: star-twinkle 3s ease-in-out infinite;
+  z-index: 0;
+  color: var(--color-voltage-violet);
+}
+.hero-zodiac {
+  position: absolute;
+  pointer-events: none;
+  animation: star-float 8s ease-in-out infinite;
+  z-index: 0;
+  opacity: 0.12;
+  font-size: clamp(48px, 8vw, 100px);
+  user-select: none;
 }

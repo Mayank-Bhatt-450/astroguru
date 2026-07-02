@@ -1,15 +1,51 @@
 // src/components/islands/ServicesSection.tsx
-// Duration badge REMOVED per product requirement.
-
+import { useEffect, useRef } from 'react';
 import { useAppStore, selectServices } from '../../stores/appStore';
 
 export default function ServicesSection() {
   const bootStatus        = useAppStore(s => s.bootStatus);
   const services          = useAppStore(selectServices).filter(s => s.isActive).sort((a, b) => a.order - b.order);
   const openServicePicker = useAppStore(s => s.openServicePicker);
+  const sectionRef        = useRef<HTMLElement>(null);
+
+  // Re-observe animate-on-scroll elements every time boot data arrives.
+  // Without this, cards injected after the initial IntersectionObserver run
+  // are never seen by the observer and stay at opacity:0 forever.
+  useEffect(() => {
+    if (bootStatus !== 'ready') return;
+    const el = sectionRef.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.08, rootMargin: '0px 0px -20px 0px' }
+    );
+
+    // Small delay so React has flushed the DOM before we query
+    const t = setTimeout(() => {
+      el.querySelectorAll('.animate-on-scroll').forEach(node => {
+        // If already visible (scrolled past on a slow load), show immediately
+        const rect = node.getBoundingClientRect();
+        if (rect.top < window.innerHeight) {
+          node.classList.add('visible');
+        } else {
+          observer.observe(node);
+        }
+      });
+    }, 50);
+
+    return () => { clearTimeout(t); observer.disconnect(); };
+  }, [bootStatus]);
 
   return (
-    <section className="section" id="services" style={{ background: 'var(--color-fog)' }}>
+    <section ref={sectionRef} className="section" id="services" style={{ background: 'var(--color-fog)' }}>
       <div className="container">
         <div className="text-center mb-48 animate-on-scroll">
           <p className="eyebrow mb-12">What I Offer</p>
@@ -19,7 +55,7 @@ export default function ServicesSection() {
           <div className="divider-violet" />
         </div>
 
-        {/* Loading */}
+        {/* Loading skeletons */}
         {bootStatus === 'loading' && (
           <div className="services-grid">
             {[1,2,3].map(i => (
@@ -45,7 +81,7 @@ export default function ServicesSection() {
           </div>
         )}
 
-        {/* Cards */}
+        {/* Cards — animate-on-scroll re-observed via useEffect above */}
         {bootStatus === 'ready' && (
           <div className="services-grid">
             {services.map((svc, i) => (
@@ -54,10 +90,9 @@ export default function ServicesSection() {
                 className="card service-card animate-on-scroll"
                 style={{
                   display: 'flex', flexDirection: 'column', gap: 16,
-                  animationDelay: `${i * 0.1}s`,
+                  transitionDelay: `${i * 0.08}s`,
                 }}
               >
-                {/* Icon chip */}
                 <div style={{
                   width: 52, height: 52, borderRadius: 14, fontSize: 24,
                   background: ['var(--color-lavender-field)','var(--color-mint-wash)','#fce7f3'][i % 3],
@@ -72,7 +107,6 @@ export default function ServicesSection() {
                   <p className="body-sm" style={{ lineHeight: 1.7 }}>{svc.shortDescription}</p>
                 </div>
 
-                {/* Book now — no duration badge */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: 4 }}>
                   <button
                     onClick={() => openServicePicker(svc.id)}

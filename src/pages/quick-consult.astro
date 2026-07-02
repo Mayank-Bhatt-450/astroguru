@@ -2,25 +2,85 @@
 // src/pages/quick-consult.astro
 import BaseLayout from '../layouts/BaseLayout.astro';
 import QuickConsultForm from '../components/islands/QuickConsultForm';
+
+const siteUrl = Astro.url.origin;
+
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@type': 'Service',
+  name: 'Quick Astrology Consultation',
+  description: 'Ask up to 3 astrology, numerology, or Vastu Shastra questions and receive personalised written answers via email within 24 hours.',
+  provider: {
+    '@type': 'LocalBusiness',
+    name: 'AstroGuru',
+    url: siteUrl,
+  },
+  offers: {
+    '@type': 'Offer',
+    price: '499',
+    priceCurrency: 'INR',
+    availability: 'https://schema.org/InStock',
+  },
+  serviceType: 'Written Consultation',
+  areaServed: 'Worldwide',
+};
 ---
 
 <BaseLayout
-  title="Quick Consultation – Get Answers via Email"
-  description="Ask up to 3 astrology, numerology, or vastu questions and receive personalised answers via email within 24 hours."
+  title="Quick Astrology Consultation — 3 Questions Answered via Email | AstroGuru"
+  description="Not ready for a full session? Ask up to 3 astrology, numerology, or Vastu Shastra questions and receive a personalised written response within 24 hours. Only ₹499."
+  canonical={`${siteUrl}/quick-consult`}
+  structuredData={structuredData}
 >
   <div class="section">
-    <div class="container" style="max-width: 640px;">
-      <div class="text-center mb-5">
-        <p class="section-eyebrow mb-2">⚡ Fast Answers</p>
-        <h1 class="section-title mb-3">Quick Consultation</h1>
-        <hr class="gold-divider" />
-        <p class="serif-body mt-4">
-          Not ready for a live session? Ask up to 3 questions and receive a personalised,
+    <div class="container" style="max-width: 660px;">
+
+      <nav aria-label="Breadcrumb" style="margin-bottom:16px;">
+        <ol style="list-style:none;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--color-slate);">
+          <li><a href="/" style="color:var(--color-voltage-violet);">Home</a></li>
+          <li aria-hidden="true" style="opacity:0.4;">›</li>
+          <li aria-current="page">Quick Consultation</li>
+        </ol>
+      </nav>
+
+      <div class="text-center mb-48 animate-on-scroll">
+        <p class="eyebrow mb-12">⚡ Fast Answers</p>
+        <h1 class="text-heading" style="font-size:clamp(1.8rem,4vw,2.6rem);margin-bottom:16px;">
+          Quick Consultation
+        </h1>
+        <div class="divider-violet"></div>
+        <p class="body-lg" style="max-width:520px;margin:20px auto 0;">
+          Not ready for a live session? Ask up to <strong>3 specific questions</strong> and receive a personalised,
           written response via email — usually within 24 hours.
         </p>
       </div>
 
+      <!-- Trust signals -->
+      <div style="display:flex;justify-content:center;gap:clamp(16px,4vw,32px);margin-bottom:40px;flex-wrap:wrap;">
+        {[
+          { icon: '✍️', label: 'Written response' },
+          { icon: '⏱', label: 'Within 24 hours' },
+          { icon: '🔒', label: 'Private & secure' },
+          { icon: '💬', label: 'Up to 3 questions' },
+        ].map(t => (
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:16px;" aria-hidden="true">{t.icon}</span>
+            <span style="font-size:13px;color:var(--color-slate);font-weight:500;">{t.label}</span>
+          </div>
+        ))}
+      </div>
+
       <QuickConsultForm client:load />
+
+      <!-- Internal links -->
+      <div style="margin-top:40px;padding:20px;background:var(--color-lavender-field);border-radius:14px;text-align:center;">
+        <p style="font-size:14px;color:var(--color-graphite);margin-bottom:12px;">
+          Looking for a deeper, personalised reading?
+        </p>
+        <a href="/#services" class="btn btn-dark" style="font-size:14px;">
+          View Full Consultation Services →
+        </a>
+      </div>
     </div>
   </div>
 </BaseLayout>

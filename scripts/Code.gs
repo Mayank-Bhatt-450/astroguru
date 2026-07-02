@@ -88,10 +88,20 @@ function validateEmail(email) {
  * Use initializeSheets(true) to WIPE and rebuild everything.
  */
 function initializeSheets(forceRebuild) {
-  var ui = SpreadsheetApp.getUi();
+  // SpreadsheetApp.getUi() throws when called outside a UI context
+  // (e.g. from a time-driven trigger, doGet, or doPost).
+  // Detect whether we have a UI and degrade gracefully if not.
+  var hasUi = false;
+  var ui;
+  try {
+    ui = SpreadsheetApp.getUi();
+    hasUi = true;
+  } catch (e) {
+    hasUi = false;
+  }
 
-  // Confirm destructive rebuild
-  if (forceRebuild === true) {
+  // Confirm destructive rebuild — only when called from the script editor UI
+  if (forceRebuild === true && hasUi) {
     var response = ui.alert(
       '⚠️  Rebuild All Sheets?',
       'This will DELETE all existing data and recreate every sheet from scratch.\n\nType "REBUILD" in the next prompt to confirm.',
@@ -212,8 +222,21 @@ function initializeSheets(forceRebuild) {
 
   // ── 9. QuickConsults ──────────────────────────────────
   results.push(_initSheet('QuickConsults',
-    [['id','name','email','phone','question1','question2','question3','status','createdAt']],
+    [['id','name','email','phone','question1','question2','question3','paymentId','status','createdAt']],
     [],
+    forceRebuild
+  ));
+
+  // ── 9b. Addons ────────────────────────────────────────
+  // Optional extras customers can add to any booking.
+  // Columns: id | name | description | price (paise) | priceDisplay
+  //        | isActive | serviceIds (comma-sep) | popularDefault | order
+  results.push(_initSheet('Addons',
+    [['id','name','description','price','priceDisplay','isActive','serviceIds','popularDefault','order']],
+    [
+      ['addon_transit', 'Transit Report', 'Detailed planetary transit forecast for the next 12 months', 19900, '₹199', 'TRUE', '', 'TRUE', 1],
+      ['addon_compat',  'Compatibility Analysis', 'Relationship compatibility report with key insights', 29900, '₹299', 'TRUE', 'astrology', 'FALSE', 2],
+    ],
     forceRebuild
   ));
 
@@ -358,7 +381,7 @@ function validateSetup() {
   var required = [
     'Config','Services','Pricing','Testimonials','FAQs',
     'Slots','Bookings','OTP_Tokens','QuickConsults',
-    'Content_Hero','Content_About','Content_QuickConsult'
+    'Content_Hero','Content_About','Content_QuickConsult','Addons'
   ];
 
   var missing  = [];
@@ -544,6 +567,9 @@ function getBoot() {
     quickConsult: getContentSection('Content_QuickConsult'),
   };
 
+  // Load add-ons (graceful — sheet may not exist on old installs)
+  var addons = getAddons();
+
   return {
     v:            2,
     config:       config,
@@ -554,7 +580,40 @@ function getBoot() {
       return (parseInt(a.order) || 0) - (parseInt(b.order) || 0);
     }),
     content: content,
+    addons:  addons,
   };
+}
+
+// ── getAddons — load and normalise the Addons sheet ─────────
+// Returns [] if the Addons sheet does not exist yet (backwards-
+// compatible with installs that pre-date the add-on feature).
+function getAddons() {
+  try {
+    var s = SS.getSheetByName('Addons');
+    if (!s) return [];
+    var rows = sheetRows('Addons');
+    return rows
+      .filter(function(a) { return cfgBool(a.isActive); })
+      .map(function(a) {
+        return {
+          id:             String(a.id || ''),
+          name:           String(a.name || ''),
+          description:    String(a.description || ''),
+          price:          parseInt(a.price) || 0,
+          priceDisplay:   String(a.priceDisplay || ''),
+          isActive:       cfgBool(a.isActive),
+          serviceIds:     a.serviceIds
+            ? String(a.serviceIds).split(',').map(function(s){return s.trim();}).filter(Boolean)
+            : [],
+          popularDefault: cfgBool(a.popularDefault),
+          order:          parseInt(a.order) || 0,
+        };
+      })
+      .sort(function(a, b) { return a.order - b.order; });
+  } catch (e) {
+    Logger.log('getAddons error (non-fatal): ' + e.message);
+    return [];
+  }
 }
 
 // ── fixConfigBooleans ────────────────────────────────────────
@@ -1039,6 +1098,8 @@ function confirmBooking(body) {
   var phone             = body.phone;
   var serviceId         = body.serviceId;
   var lockToken         = body.lockToken;
+  // Add-ons: array of addon IDs selected by the client
+  var addonIds          = Array.isArray(body.addonIds) ? body.addonIds : [];
 
   // 1. Verify Razorpay HMAC signature
   var expectedSig = computeHmacSha256(razorpayOrderId + '|' + razorpayPaymentId, RZP_SEC);
@@ -1460,19 +1521,46 @@ function verifyOtp(body) {
 function createRazorpayOrder(body) {
   // SECURITY: NEVER trust the amount from the client.
   // Look up the canonical price from the Pricing sheet using serviceId.
+  // Add-on prices are also looked up server-side from the Addons sheet.
   // This prevents attackers from sending ₹1 orders for any service.
   var serviceId = sanitiseString(body.serviceId, 100);
   var email     = validateEmail(body.email);
   var currency  = 'INR'; // hardcoded — do not accept from client
   var receipt   = generateId('rcpt');
+  // Add-ons: array of addon IDs — prices resolved server-side
+  var addonIds  = Array.isArray(body.addonIds) ? body.addonIds : [];
 
-  // Look up canonical price server-side
-  var amount = getCanonicalPrice(serviceId);
-  if (!amount || amount <= 0) {
+  // Look up canonical base price server-side
+  var baseAmount = getCanonicalPrice(serviceId);
+  if (!baseAmount || baseAmount <= 0) {
     throw new Error('Cannot determine price for service: ' + serviceId);
   }
 
-  Logger.log('createRazorpayOrder: serviceId=' + serviceId + ' amount=' + amount + ' email=' + email);
+  // Add up addon prices from the Addons sheet (never trust client-sent prices)
+  var addonTotal = 0;
+  if (addonIds.length > 0) {
+    var addonRows = [];
+    try { addonRows = sheetRows('Addons'); } catch(e) {}
+    addonIds.forEach(function(id) {
+      var addon = null;
+      for (var i = 0; i < addonRows.length; i++) {
+        if (String(addonRows[i].id) === String(id) && cfgBool(addonRows[i].isActive)) {
+          addon = addonRows[i];
+          break;
+        }
+      }
+      if (addon) {
+        addonTotal += parseInt(addon.price) || 0;
+        Logger.log('createRazorpayOrder: addon ' + id + ' price=' + addon.price);
+      } else {
+        Logger.log('createRazorpayOrder: addon not found or inactive: ' + id);
+      }
+    });
+  }
+
+  var amount = baseAmount + addonTotal;
+  Logger.log('createRazorpayOrder: serviceId=' + serviceId + ' base=' + baseAmount +
+    ' addons=' + addonTotal + ' total=' + amount + ' email=' + email);
 
   var credentials = Utilities.base64Encode(RZP_KEY + ':' + RZP_SEC);
   var response    = UrlFetchApp.fetch('https://api.razorpay.com/v1/orders', {
@@ -1554,11 +1642,32 @@ function handleQuickConsult(body) {
   var consultId = generateId('qc');
   try {
     var s = SS.getSheetByName('QuickConsults') || SS.insertSheet('QuickConsults');
+
+    // ── Schema migration: ensure headers exist in correct order ──
+    // Handles sheets created before paymentId / answer columns were added.
+    var existingData = s.getDataRange().getValues();
+    if (existingData.length === 0 || existingData[0].length === 0) {
+      // Sheet is empty — write the full header row
+      s.appendRow(['id','name','email','phone','question1','question2','question3','paymentId','status','createdAt']);
+    } else {
+      var existingHeaders = existingData[0];
+      // Add paymentId column if missing (old 9-column schema)
+      if (existingHeaders.indexOf('paymentId') === -1) {
+        var paymentIdCol = existingHeaders.length + 1;
+        s.getRange(1, paymentIdCol).setValue('paymentId');
+        existingHeaders.push('paymentId');
+        Logger.log('handleQuickConsult: migrated paymentId column at position ' + paymentIdCol);
+      }
+      // Add answer columns if missing (will be added by ensureQuickConsultsAnswerSchema when answering)
+    }
+
+    // Append row — columns: id | name | email | phone | q1 | q2 | q3 | paymentId | status | createdAt
     s.appendRow([
       consultId, name, email, phone,
       q1, q2, q3,
-      paymentId,  // store payment ref for audit
-      'received', new Date().toISOString(),
+      paymentId,
+      'received',
+      new Date().toISOString(),
     ]);
   } catch (e) { Logger.log('QuickConsult sheet error: ' + e.message); }
 
@@ -2202,9 +2311,67 @@ function adminRescheduleBooking(body) {
 // ============================================================
 function adminGetQuickConsults(body) {
   if (!verifyAdmin(body.adminToken)) throw new Error('Unauthorized');
-  var rows = sheetRows('QuickConsults');
+
+  var s = SS.getSheetByName('QuickConsults');
+  if (!s) return [];
+
+  // Ensure answer columns exist before reading
+  var data = s.getDataRange().getValues();
+  if (data.length < 1) return [];
+  var headers = data[0].map(String);
+  ensureQuickConsultsAnswerSchema(s, headers);
+
+  // Re-read after potential schema migration
+  data    = s.getDataRange().getValues();
+  headers = data[0].map(String);
+
+  if (data.length < 2) return [];
+
+  var rows = data.slice(1).map(function(row) {
+    var obj = {};
+    headers.forEach(function(h, i) { obj[h] = row[i]; });
+    return obj;
+  });
+
+  // Normalise: coerce status to 'received' | 'answered', createdAt to ISO string.
+  // This handles old rows where status/createdAt were written into wrong columns.
+  var normalised = rows.map(function(r) {
+    var status = String(r.status || '');
+    // If status doesn't look like a valid status value, it's likely a paymentId
+    // that got written into the wrong column — fix by reading paymentId separately
+    if (status !== 'received' && status !== 'answered') {
+      // Treat as missing status — default to 'received'
+      r.paymentId = r.paymentId || status;
+      r.status    = 'received';
+    }
+    var createdAt = String(r.createdAt || '');
+    // If createdAt looks like a status string, it was misaligned too
+    if (createdAt === 'received' || createdAt === 'answered' || createdAt === '') {
+      r.createdAt = new Date().toISOString();
+    }
+    return {
+      id:         String(r.id || ''),
+      name:       String(r.name || ''),
+      email:      String(r.email || ''),
+      phone:      String(r.phone || ''),
+      question1:  String(r.question1 || ''),
+      question2:  String(r.question2 || '') || undefined,
+      question3:  String(r.question3 || '') || undefined,
+      paymentId:  String(r.paymentId || ''),
+      status:     String(r.status || 'received'),
+      createdAt:  String(r.createdAt || new Date().toISOString()),
+      answer1:    String(r.answer1 || '') || undefined,
+      answer2:    String(r.answer2 || '') || undefined,
+      answer3:    String(r.answer3 || '') || undefined,
+      answeredAt: String(r.answeredAt || '') || undefined,
+    };
+  });
+
+  // Filter out completely empty rows (e.g. blank sheet rows)
+  normalised = normalised.filter(function(r) { return r.id && r.name; });
+
   // Return newest first
-  return rows.sort(function(a, b) {
+  return normalised.sort(function(a, b) {
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
 }

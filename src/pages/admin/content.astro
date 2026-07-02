@@ -4,5 +4,7 @@ import AdminLayout from '../../layouts/AdminLayout.astro';
 import AdminContentManager from '../../components/admin/AdminContentManager';
 ---
 <AdminLayout title="Content Manager" activeSection="content">
+  <h1 class="admin-section-title">Content Manager</h1>
+  <p class="admin-section-desc">Edit hero, about, FAQs, and Quick Consult content.</p>
   <AdminContentManager client:load />
 </AdminLayout>

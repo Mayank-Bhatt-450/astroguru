@@ -1,7 +1,8 @@
 ---
 // src/layouts/BaseLayout.astro
 // AstroGuru — public pages layout
-// Includes: mobile nav, scroll-reveal observer, AstroGuru brand
+// SEO: full meta, OG, Twitter, JSON-LD structured data, canonical
+// Mobile nav: Book a Session matches other nav items in style
 import AppBootstrap from '../components/islands/AppBootstrap';
 import NavBookButton from '../components/islands/NavBookButton';
 import WhatsAppFab from '../components/islands/WhatsAppFab';
@@ -10,28 +11,96 @@ import ServicePickerModal from '../components/booking/ServicePickerModal';
 import DevModeBadge from '../components/islands/DevModeBadge';
 
 interface Props {
-  title?: string;
-  description?: string;
+  title?:          string;
+  description?:    string;
+  canonical?:      string;
+  ogImage?:        string;
+  pageType?:       'website' | 'article';
+  noindex?:        boolean;
+  structuredData?: object;
 }
+
 const {
-  title       = 'AstroGuru — Vedic Astrology Consultations',
-  description = 'Book a private 1-on-1 consultation for astrology, numerology, or Vastu Shastra.',
+  title          = 'AstroGuru — Vedic Astrology Consultations Online',
+  description    = 'Book a private 1-on-1 Vedic astrology, numerology, or Vastu Shastra consultation with an expert practitioner. Personalised insights, instant confirmation, Google Meet included.',
+  canonical      = Astro.url.href,
+  ogImage        = `${Astro.url.origin}/og-image.jpg`,
+  pageType       = 'website',
+  noindex        = false,
+  structuredData,
 } = Astro.props;
+
+const defaultSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'ProfessionalService',
+  name: 'AstroGuru',
+  description: 'Expert Vedic astrology, numerology, and Vastu Shastra consultations.',
+  url: Astro.url.origin,
+  image: ogImage,
+  priceRange: '₹999–₹2,500',
+  serviceType: ['Vedic Astrology', 'Numerology', 'Vastu Shastra'],
+  areaServed: 'Worldwide',
+  availableLanguage: ['English', 'Hindi'],
+  hasOfferCatalog: {
+    '@type': 'OfferCatalog',
+    name: 'Consultation Services',
+    itemListElement: [
+      { '@type': 'Offer', itemOffered: { '@type': 'Service', name: 'Vedic Astrology Consultation' } },
+      { '@type': 'Offer', itemOffered: { '@type': 'Service', name: 'Numerology Reading' } },
+      { '@type': 'Offer', itemOffered: { '@type': 'Service', name: 'Vastu Shastra Consultation' } },
+    ],
+  },
+};
+
+const schema = structuredData ?? defaultSchema;
+const schemaJson = JSON.stringify(schema);
 ---
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content={description} />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+
+  <!-- Primary SEO -->
   <title>{title}</title>
+  <meta name="description" content={description} />
+  <link rel="canonical" href={canonical} />
+  {noindex && <meta name="robots" content="noindex,nofollow" />}
+  {!noindex && <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />}
+  <meta name="author" content="AstroGuru" />
+  <meta name="keywords" content="Vedic astrology consultation, numerology reading, Vastu Shastra, online astrology, birth chart reading, jyotish, Indian astrology" />
+
+  <!-- Open Graph -->
+  <meta property="og:title"       content={title} />
+  <meta property="og:description" content={description} />
+  <meta property="og:type"        content={pageType} />
+  <meta property="og:url"         content={canonical} />
+  <meta property="og:image"       content={ogImage} />
+  <meta property="og:image:alt"   content="AstroGuru — Vedic Astrology Consultations" />
+  <meta property="og:site_name"   content="AstroGuru" />
+  <meta property="og:locale"      content="en_IN" />
+
+  <!-- Twitter -->
+  <meta name="twitter:card"        content="summary_large_image" />
+  <meta name="twitter:title"       content={title} />
+  <meta name="twitter:description" content={description} />
+  <meta name="twitter:image"       content={ogImage} />
+  <meta name="twitter:image:alt"   content="AstroGuru — Vedic Astrology Consultations" />
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+  <!-- Fonts (preconnect for performance) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- Stylesheet -->
   <link rel="stylesheet" href="/styles/global.css" />
-  <meta property="og:title"       content={title} />
-  <meta property="og:description" content={description} />
-  <meta property="og:type"        content="website" />
+
+  <!-- Structured data (JSON-LD) -->
+  <script type="application/ld+json" set:html={schemaJson} />
 </head>
 <body>
 
@@ -42,8 +111,8 @@ const {
   <nav class="site-nav" role="navigation" aria-label="Main navigation">
     <div class="nav-inner">
       <!-- Logo -->
-      <a href="/" class="nav-logo" aria-label="AstroGuru home">
-        <span class="nav-logo-star">✦</span>
+      <a href="/" class="nav-logo" aria-label="AstroGuru — home">
+        <span class="nav-logo-star" aria-hidden="true">✦</span>
         AstroGuru
       </a>
 
@@ -65,7 +134,7 @@ const {
       <button
         class="nav-hamburger"
         id="nav-hamburger"
-        aria-label="Open menu"
+        aria-label="Open navigation menu"
         aria-expanded="false"
         aria-controls="mobile-menu"
       >
@@ -75,19 +144,26 @@ const {
       </button>
     </div>
 
-    <!-- Mobile menu -->
-    <div class="mobile-menu" id="mobile-menu" role="menu">
-      <a href="/#services" role="menuitem">Services</a>
-      <a href="/#pricing"  role="menuitem">Pricing</a>
-      <a href="/#testimonials" role="menuitem">Reviews</a>
-      <a href="/#faqs"    role="menuitem">FAQs</a>
-      <a href="/quick-consult" role="menuitem">Quick Consult</a>
-      <NavBookButton client:load />
-    </div>
+    <!-- Mobile menu — all items share the same plain-text nav style -->
+    <nav class="mobile-menu" id="mobile-menu" aria-label="Mobile navigation" aria-hidden="true">
+      <a href="/#services" tabindex="-1">Services</a>
+      <a href="/#pricing"  tabindex="-1">Pricing</a>
+      <a href="/#testimonials" tabindex="-1">Reviews</a>
+      <a href="/#faqs"    tabindex="-1">FAQs</a>
+      <a href="/quick-consult" tabindex="-1">Quick Consult</a>
+      <button
+        id="mobile-book-btn"
+        class="mobile-book-btn"
+        tabindex="-1"
+        aria-label="Book a consultation session"
+      >
+        Book a Session
+      </button>
+    </nav>
   </nav>
 
   <!-- ── Page content ── -->
-  <main>
+  <main id="main-content">
     <slot />
   </main>
 
@@ -95,30 +171,30 @@ const {
   <footer class="site-footer" role="contentinfo">
     <div class="footer-grid">
       <div>
-        <div class="nav-logo" style="color:white; margin-bottom:12px;">
-          <span class="nav-logo-star">✦</span> AstroGuru
+        <div class="nav-logo" style="color:white; margin-bottom:12px;" aria-label="AstroGuru">
+          <span class="nav-logo-star" aria-hidden="true">✦</span> AstroGuru
         </div>
         <p style="font-size:14px; line-height:1.7; max-width:280px;">
           Ancient Vedic wisdom, personalised for your modern life. Private, confidential, and deeply transformative.
         </p>
       </div>
-      <div>
+      <nav aria-label="Footer services">
         <p style="font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.4); margin-bottom:14px;">Services</p>
         <ul style="list-style:none; display:flex; flex-direction:column; gap:8px;">
-          <li><a href="/#services" style="font-size:14px; color:rgba(255,255,255,0.65); transition:color 0.15s;" onmouseenter="this.style.color='white'" onmouseleave="this.style.color='rgba(255,255,255,0.65)'">Vedic Astrology</a></li>
+          <li><a href="/#services" style="font-size:14px; color:rgba(255,255,255,0.65);">Vedic Astrology</a></li>
           <li><a href="/#services" style="font-size:14px; color:rgba(255,255,255,0.65);">Numerology</a></li>
           <li><a href="/#services" style="font-size:14px; color:rgba(255,255,255,0.65);">Vastu Shastra</a></li>
           <li><a href="/quick-consult" style="font-size:14px; color:rgba(255,255,255,0.65);">Quick Consult</a></li>
         </ul>
-      </div>
-      <div>
+      </nav>
+      <nav aria-label="Footer info">
         <p style="font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.4); margin-bottom:14px;">Info</p>
         <ul style="list-style:none; display:flex; flex-direction:column; gap:8px;">
-          <li><a href="/#faqs" style="font-size:14px; color:rgba(255,255,255,0.65);">FAQs</a></li>
+          <li><a href="/#faqs"         style="font-size:14px; color:rgba(255,255,255,0.65);">FAQs</a></li>
           <li><a href="/#testimonials" style="font-size:14px; color:rgba(255,255,255,0.65);">Reviews</a></li>
-          <li><a href="/#book" style="font-size:14px; color:rgba(255,255,255,0.65);">Book a Session</a></li>
+          <li><a href="/#book"         style="font-size:14px; color:rgba(255,255,255,0.65);">Book a Session</a></li>
         </ul>
-      </div>
+      </nav>
     </div>
     <div class="footer-bottom">
       <span>© {new Date().getFullYear()} AstroGuru. All rights reserved.</span>
@@ -136,26 +212,53 @@ const {
   <script>
     const hamburger  = document.getElementById('nav-hamburger');
     const mobileMenu = document.getElementById('mobile-menu');
+    const mobileBookBtn = document.getElementById('mobile-book-btn');
 
-    hamburger?.addEventListener('click', () => {
-      const isOpen = mobileMenu?.classList.toggle('open');
-      hamburger.setAttribute('aria-expanded', String(isOpen));
-    });
-
-    // Close on link click
-    mobileMenu?.querySelectorAll('a').forEach(link => {
-      link.addEventListener('click', () => {
-        mobileMenu.classList.remove('open');
-        hamburger?.setAttribute('aria-expanded', 'false');
+    // Wire the mobile "Book a Session" button to the Zustand store.
+    // The store is attached to window by AppBootstrap after hydration.
+    // We retry a few times to wait for React hydration.
+    function wireMobileBookBtn() {
+      if (!mobileBookBtn) return;
+      // Try to access the store through the React island's exposed store
+      mobileBookBtn.addEventListener('click', () => {
+        closeMenu();
+        // Dispatch a custom event that AppBootstrap / any island can listen to
+        window.dispatchEvent(new CustomEvent('astroguru:openServicePicker'));
       });
+    }
+    wireMobileBookBtn();
+
+    function openMenu() {
+      mobileMenu?.classList.add('open');
+      hamburger?.setAttribute('aria-expanded', 'true');
+      mobileMenu?.setAttribute('aria-hidden', 'false');
+      mobileMenu?.querySelectorAll('a, button').forEach(el => el.removeAttribute('tabindex'));
+    }
+
+    function closeMenu() {
+      mobileMenu?.classList.remove('open');
+      hamburger?.setAttribute('aria-expanded', 'false');
+      mobileMenu?.setAttribute('aria-hidden', 'true');
+      mobileMenu?.querySelectorAll('a, button').forEach(el => el.setAttribute('tabindex', '-1'));
+    }
+
+    hamburger?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      mobileMenu?.classList.contains('open') ? closeMenu() : openMenu();
     });
 
-    // Close on outside click
+    mobileMenu?.addEventListener('click', (e) => {
+      if ((e.target as Element)?.closest('a, button')) closeMenu();
+    });
+
     document.addEventListener('click', (e) => {
       if (!hamburger?.contains(e.target as Node) && !mobileMenu?.contains(e.target as Node)) {
-        mobileMenu?.classList.remove('open');
-        hamburger?.setAttribute('aria-expanded', 'false');
+        closeMenu();
       }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeMenu();
     });
   </script>
 
@@ -173,23 +276,14 @@ const {
       { threshold: 0.12, rootMargin: '0px 0px -40px 0px' }
     );
 
-    // Observe all .animate-on-scroll elements
     const observe = () => {
-      document.querySelectorAll('.animate-on-scroll').forEach(el => {
-        observer.observe(el);
-      });
+      document.querySelectorAll('.animate-on-scroll').forEach(el => observer.observe(el));
     };
 
-    // Run now and after a short delay to catch hydrated islands
     observe();
     setTimeout(observe, 600);
     setTimeout(observe, 1400);
   </script>
-
-  <!-- ── Hide mobile utility class ── -->
-  <style>
-    @media (max-width: 768px) { .hide-mobile { display: none !important; } }
-  </style>
 
 </body>
 </html>

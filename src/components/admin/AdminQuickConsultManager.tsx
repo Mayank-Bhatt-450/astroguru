@@ -190,7 +190,8 @@ export default function AdminQuickConsultManager() {
           ))}
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 24, alignItems: 'start' }}>
+        <div className="qc-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 340px) 1fr', gap: 24, alignItems: 'start' }}>
+          <style>{`@media(max-width:700px){.qc-grid{grid-template-columns:1fr!important}}`}</style>
           {/* List panel */}
           <div style={{ background: 'white', border: '1px solid var(--color-mist)', borderRadius: 20, overflow: 'hidden' }}>
             <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--color-mist)', fontWeight: 600 }}>

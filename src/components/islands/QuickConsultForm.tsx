@@ -1,14 +1,22 @@
 // src/components/islands/QuickConsultForm.tsx
-// When PUBLIC_SKIP_PAYMENT=true the payment step is bypassed:
-// submitQuickConsult() is called directly after OTP verification.
+// ============================================================
+// Quick Consultation booking flow:
+//   form → OTP verify → payment (skipped if SKIP_PAYMENT) → submit → success
+//
+// Fixed bugs:
+// - submissionInProgress ref always reset on every exit path
+// - auto-verify and manual-verify cannot race (single in-flight flag)
+// - paying state kept separate from submitting
+// - idempotencyKey sent correctly at body level
+// - no stale closure over otpDigits in auto-verify
+// ============================================================
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAppStore } from '../../stores/appStore';
-import { otpService } from '../../services/otp';
-import { submitQuickConsult, createRazorpayOrder } from '../../lib/api';
+import { requestOtp, verifyOtp, submitQuickConsult } from '../../lib/api';
 import { initiatePayment } from '../../services/payment';
 import { SKIP_PAYMENT } from '../../lib/flags';
 
@@ -35,86 +43,109 @@ function Spinner({ size = 16, color = 'currentColor' }: { size?: number; color?:
 }
 
 export default function QuickConsultForm() {
-  const { boot } = useAppStore();
-  const [phase,       setPhase]       = useState<Phase>('form');
-  const [formData,    setFormData]    = useState<FormData | null>(null);
-  const [otpDigits,   setOtpDigits]   = useState(['','','','','','']);
-  const [error,       setError]       = useState('');
-  const [consultId,   setConsultId]   = useState('');
-  const [verifying,   setVerifying]   = useState(false);
-  const [submitting,  setSubmitting]  = useState(false);
-  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
-  const submissionInProgress = useRef(false);
-  const autoVerifyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { boot }      = useAppStore();
+  const qc            = boot?.content?.quickConsult;
+  const price         = (qc?.price as number) ?? 49900;
+  const priceDisplay  = (qc?.priceDisplay as string) ?? '₹499';
+  const config        = boot?.config;
 
-  const qc           = boot?.content?.quickConsult;
-  const price        = (qc?.price as number) ?? 49900;
-  const priceDisplay = (qc?.priceDisplay as string) ?? '₹499';
-  const config       = boot?.config;
+  const [phase,      setPhase]      = useState<Phase>('form');
+  const [formData,   setFormData]   = useState<FormData | null>(null);
+  const [digits,     setDigits]     = useState(['','','','','','']);
+  const [error,      setError]      = useState('');
+  const [consultId,  setConsultId]  = useState('');
+  // Single busy flag covers verify + submit + pay — prevents any double-submission
+  const [busy,       setBusy]       = useState(false);
 
-  // Cleanup auto-verify timeout on phase change or unmount
-  useEffect(() => {
-    return () => {
-      if (autoVerifyTimeoutRef.current) {
-        clearTimeout(autoVerifyTimeoutRef.current);
-        autoVerifyTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (phase !== 'otp' && autoVerifyTimeoutRef.current) {
-      clearTimeout(autoVerifyTimeoutRef.current);
-      autoVerifyTimeoutRef.current = null;
-    }
-  }, [phase]);
+  const inputRefs  = useRef<(HTMLInputElement | null)[]>([]);
+  // This ref is the single source of truth for "a network call is in flight"
+  // It is checked before every async operation and reset on EVERY exit path.
+  const inFlight   = useRef(false);
 
   const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
   });
 
+  // Reset inFlight if the component unmounts mid-flow (e.g. navigation)
+  useEffect(() => () => { inFlight.current = false; }, []);
+
+  // ── Helpers ────────────────────────────────────────────────
+  const startBusy  = () => { inFlight.current = true;  setBusy(true);  };
+  const clearBusy  = () => { inFlight.current = false; setBusy(false); };
+
   // ── Step 1: Collect form, send OTP ────────────────────────
   const onFormSubmit = async (data: FormData) => {
+    if (inFlight.current) return;
     setError('');
+    startBusy();
     setFormData(data);
-    const ok = await otpService.sendOtp(data.email);
-    if (ok) setPhase('otp');
-    else    setError('Failed to send OTP. Please try again.');
+    const result = await requestOtp(data.email);
+    clearBusy();
+    if (result.ok) {
+      setPhase('otp');
+      setDigits(['','','','','','']);
+      setTimeout(() => inputRefs.current[0]?.focus(), 80);
+    } else {
+      setError(result.error || 'Failed to send OTP. Please try again.');
+    }
   };
 
-  // ── Step 2: Verify OTP ─────────────────────────────────────
-  const verifyOtp = async () => {
-    if (verifying || submissionInProgress.current) return;
-    if (autoVerifyTimeoutRef.current) {
-      clearTimeout(autoVerifyTimeoutRef.current);
-      autoVerifyTimeoutRef.current = null;
-    }
-    const code = otpDigits.join('');
-    if (code.length < 6) { setError('Please enter all 6 digits.'); return; }
+  // ── Step 2: Verify OTP then move to payment or submit ──────
+  const runVerify = useCallback(async (code: string) => {
+    if (inFlight.current || code.length < 6 || !formData) return;
     setError('');
-    setVerifying(true);
-    const token = await otpService.confirmOtp(formData!.email, code);
-    setVerifying(false);
-    if (!token) { setError('Incorrect OTP. Please check and try again.'); return; }
+    startBusy();
 
-    // ── SKIP_PAYMENT bypass: submit directly without payment ──
+    const result = await verifyOtp(formData.email, code);
+    if (!result.ok || !result.data.verified) {
+      clearBusy();
+      setError('Incorrect OTP. Please check and try again.');
+      setDigits(['','','','','','']);
+      setTimeout(() => inputRefs.current[0]?.focus(), 80);
+      return;
+    }
+
+    // OTP verified — stay busy while deciding next step
     if (SKIP_PAYMENT) {
-      await submitDirect();
+      await doSubmit(null);   // clearBusy called inside doSubmit
     } else {
+      clearBusy();
       setPhase('payment');
     }
+  }, [formData]);
+
+  // ── OTP digit input ────────────────────────────────────────
+  const handleDigitChange = (e: React.ChangeEvent<HTMLInputElement>, i: number) => {
+    const val = e.target.value.replace(/\D/g, '').slice(-1);
+    setDigits(prev => {
+      const next = [...prev];
+      next[i] = val;
+      if (val && i < 5) {
+        setTimeout(() => inputRefs.current[i + 1]?.focus(), 0);
+      }
+      // Auto-verify when all 6 digits filled
+      if (next.every(Boolean)) {
+        setTimeout(() => runVerify(next.join('')), 120);
+      }
+      return next;
+    });
   };
 
-  // ── Submit directly (dev bypass OR post-payment) ──────────
-  const submitDirect = async () => {
-    if (!formData || submitting || submissionInProgress.current) return;
-    submissionInProgress.current = true;
-    setSubmitting(true);
-    setPhase('submitting');
-    setError('');
+  const handleDigitKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, i: number) => {
+    if (e.key === 'Backspace' && !digits[i] && i > 0) {
+      inputRefs.current[i - 1]?.focus();
+    }
+  };
 
-    // Generate idempotency key: hash of email + questions + timestamp (minute precision)
-    const idempotencyKey = `qc_${formData.email}_${formData.question1}_${Date.now() / 60000 | 0}`;
+  // ── Step 3: Submit to GAS (dev bypass OR post-payment) ─────
+  const doSubmit = async (
+    paymentProof: { razorpayPaymentId: string; razorpayOrderId: string } | null
+  ) => {
+    if (!formData) { clearBusy(); return; }
+
+    setPhase('submitting');
+
+    const idempotencyKey = `qc_${formData.email}_${Date.now()}`;
 
     const res = await submitQuickConsult({
       name:      formData.name,
@@ -122,144 +153,128 @@ export default function QuickConsultForm() {
       phone:     formData.phone,
       questions: [
         formData.question1,
-        formData.question2,
-        formData.question3,
+        formData.question2 || undefined,
+        formData.question3 || undefined,
       ] as [string, string?, string?],
-      razorpayPaymentId: SKIP_PAYMENT ? 'dev_bypass' : '',
-      razorpayOrderId:   SKIP_PAYMENT ? 'dev_bypass' : '',
+      razorpayPaymentId: SKIP_PAYMENT ? 'dev_bypass' : (paymentProof?.razorpayPaymentId ?? ''),
+      razorpayOrderId:   SKIP_PAYMENT ? 'dev_bypass' : (paymentProof?.razorpayOrderId   ?? ''),
       idempotencyKey,
     });
 
-    setSubmitting(false);
-    submissionInProgress.current = false;
+    clearBusy();   // always cleared here
 
     if (res.ok) {
       setConsultId(res.data.consultId);
       setPhase('success');
     } else {
-      setError(`Submission failed: ${res.error}`);
+      setError(`Submission failed: ${res.error}. Please try again.`);
       setPhase(SKIP_PAYMENT ? 'otp' : 'payment');
     }
   };
 
-  // ── Step 3: Real payment ───────────────────────────────────
+  // ── Step 3 (real): Razorpay payment then submit ────────────
   const pay = async () => {
-    if (!formData || submissionInProgress.current) return;
+    if (inFlight.current || !formData) return;
     setError('');
+    startBusy();
+
     const result = await initiatePayment({
       serviceId:   'quick_consult',
       amount:      price,
       currency:    config?.currencyCode || 'INR',
-      bookingId:   `qc_${Date.now()}`,
-      slotId:      'quick_consult',
-      lockToken:   'qc_no_lock',
+      receiptId:   `qc_${Date.now()}`,
       name:        formData.name,
       email:       formData.email,
       phone:       formData.phone,
-      description: 'Quick Consultation (up to 3 questions)',
-      siteName:    config?.siteName || 'Jyotish Consultations',
+      description: 'Quick Consultation — up to 3 questions',
+      siteName:    config?.siteName || 'AstroGuru',
+      notes:       { type: 'quick_consult' },
+      // No onDismiss needed — QC has no slot lock to release
     });
 
     if (result.status === 'success') {
-      await submitDirect();
+      // Still busy — doSubmit will clearBusy
+      await doSubmit({
+        razorpayPaymentId: result.razorpayPaymentId,
+        razorpayOrderId:   result.razorpayOrderId,
+      });
     } else if (result.status === 'failed') {
+      clearBusy();
       setError(result.error);
-    }
-    // dismissed — stay on payment step
-  };
-
-  // ── OTP input helpers ──────────────────────────────────────
-  const handleOtpChange = (e: React.ChangeEvent<HTMLInputElement>, i: number) => {
-    const val = e.target.value.replace(/\D/g, '').slice(-1);
-    const next = [...otpDigits]; next[i] = val; setOtpDigits(next);
-    if (val && i < 5) inputRefs.current[i + 1]?.focus();
-    if (next.every(Boolean) && !verifying && !submissionInProgress.current) {
-      // Auto-verify when all 6 digits entered
-      if (autoVerifyTimeoutRef.current) {
-        clearTimeout(autoVerifyTimeoutRef.current);
-      }
-      autoVerifyTimeoutRef.current = setTimeout(() => {
-        if (verifying || submissionInProgress.current) return;
-        const code = next.join('');
-        if (code.length === 6) {
-          otpService.confirmOtp(formData!.email, code).then(token => {
-            if (token) {
-              if (SKIP_PAYMENT) submitDirect();
-              else setPhase('payment');
-            } else {
-              setError('Incorrect OTP. Please try again.');
-              setOtpDigits(['','','','','','']);
-              inputRefs.current[0]?.focus();
-            }
-          });
-        }
-      }, 100);
-    }
-  };
-  const handleOtpKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, i: number) => {
-    if (e.key === 'Backspace' && !otpDigits[i] && i > 0) {
-      inputRefs.current[i - 1]?.focus();
+    } else {
+      // dismissed — user closed checkout, stay on payment step
+      clearBusy();
     }
   };
 
-  // ── Success ────────────────────────────────────────────────
-  if (phase === 'success') return (
-    <div style={{ background: 'white', border: '1px solid var(--color-mist)', borderRadius: 24, padding: 36, textAlign: 'center' }}>
-      <div style={{ fontSize: 52, marginBottom: 16 }}>📬</div>
-      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--color-voltage-violet)', marginBottom: 10 }}>
-        Questions Received!
-      </h2>
-      {SKIP_PAYMENT && (
-        <div style={{ background: '#fef3c7', border: '1px solid #f59e0b', borderRadius: 8, padding: '8px 14px', marginBottom: 14, fontSize: 12, color: '#92400e' }}>
-          ⚠️ Dev mode — no payment was charged
-        </div>
-      )}
-      <p style={{ fontSize: 15, color: 'var(--color-slate)', lineHeight: 1.7 }}>
-        You'll receive a personalised written response at{' '}
-        <strong style={{ color: 'var(--color-midnight-ink)' }}>{formData?.email}</strong>{' '}
-        within {(qc?.turnaroundHours as number) || 24} hours.
-      </p>
-      <p style={{ fontSize: 12, color: 'var(--color-slate)', marginTop: 12 }}>
-        Reference: {consultId}
-      </p>
-    </div>
-  );
+  // ── Success screen ─────────────────────────────────────────
+  if (phase === 'success') {
+    return (
+      <div style={{ background: 'white', border: '1px solid var(--color-mist)', borderRadius: 24, padding: 'clamp(24px,5vw,40px)', textAlign: 'center' }}>
+        <div style={{ fontSize: 52, marginBottom: 16 }}>📬</div>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--color-voltage-violet)', marginBottom: 10 }}>
+          Questions Received!
+        </h2>
+        {SKIP_PAYMENT && (
+          <div style={{ background: '#fef3c7', border: '1px solid #f59e0b', borderRadius: 8, padding: '8px 14px', marginBottom: 14, fontSize: 12, color: '#92400e' }}>
+            ⚠️ Dev mode — no payment charged
+          </div>
+        )}
+        <p style={{ fontSize: 15, color: 'var(--color-slate)', lineHeight: 1.7 }}>
+          You'll receive a personalised written response at{' '}
+          <strong style={{ color: 'var(--color-midnight-ink)' }}>{formData?.email}</strong>{' '}
+          within {(qc?.turnaroundHours as number) || 24} hours.
+        </p>
+        {consultId && (
+          <p style={{ fontSize: 12, color: 'var(--color-slate)', marginTop: 10 }}>
+            Reference: {consultId}
+          </p>
+        )}
+        <a href="/" className="btn btn-ghost" style={{ marginTop: 28, display: 'inline-flex' }}>
+          ← Back to Home
+        </a>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ background: 'white', border: '1px solid var(--color-mist)', borderRadius: 24, padding: 36 }}>
+    <div style={{ background: 'white', border: '1px solid var(--color-mist)', borderRadius: 24, padding: 'clamp(20px,5vw,36px)' }}>
 
       {/* Dev mode banner */}
       {SKIP_PAYMENT && (
         <div style={{ background: '#fef3c7', border: '2px dashed #f59e0b', borderRadius: 10, padding: '10px 14px', marginBottom: 20, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <span style={{ fontSize: 16, flexShrink: 0 }}>⚠️</span>
-          <p style={{ fontSize: 12, color: '#92400e', lineHeight: 1.5 }}>
-            <strong>DEV MODE</strong> — Payment bypassed (<code>PUBLIC_SKIP_PAYMENT=true</code>).
-            Questions will be submitted directly after OTP verification.
+          <p style={{ fontSize: 12, color: '#92400e', lineHeight: 1.5, margin: 0 }}>
+            <strong>DEV MODE</strong> — Payment bypassed. Questions submitted after OTP.
           </p>
         </div>
       )}
 
       {/* Pricing banner */}
-      {qc && (
-        <div style={{ background: 'var(--color-lavender-field)', borderRadius: 14, padding: '18px 20px', textAlign: 'center', marginBottom: 28 }}>
-          <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--color-ultra-violet)', marginBottom: 6 }}>
+      {qc && phase === 'form' && (
+        <div style={{ background: 'var(--color-lavender-field)', borderRadius: 14, padding: '16px 20px', textAlign: 'center', marginBottom: 28 }}>
+          <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--color-ultra-violet)', marginBottom: 4 }}>
             Investment
           </p>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 36, fontWeight: 600, color: 'var(--color-voltage-violet)', lineHeight: 1, marginBottom: 6 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 600, color: 'var(--color-voltage-violet)', lineHeight: 1, marginBottom: 4 }}>
             {SKIP_PAYMENT ? 'FREE (dev)' : priceDisplay}
           </div>
-          <p style={{ fontSize: 12, color: 'var(--color-slate)' }}>
+          <p style={{ fontSize: 12, color: 'var(--color-slate)', margin: 0 }}>
             Up to {(qc?.maxQuestions as number) || 3} questions · Written answers · Within {(qc?.turnaroundHours as number) || 24} hours
           </p>
         </div>
       )}
 
-      {error && <div className="banner banner-error mb-20">{error}</div>}
+      {error && (
+        <div className="banner banner-error mb-20">
+          <span>⚠ {error}</span>
+        </div>
+      )}
 
-      {/* ── Phase: Form ── */}
+      {/* ── Phase: Form ─────────────────────────────────────── */}
       {phase === 'form' && (
         <form onSubmit={handleSubmit(onFormSubmit)}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 16 }}>
             <div className="form-group">
               <label className="form-label">Your Name</label>
               <input className={`form-input ${errors.name ? 'error' : ''}`} placeholder="Full name" {...register('name')} />
@@ -271,11 +286,13 @@ export default function QuickConsultForm() {
               {errors.phone && <p className="form-error">{errors.phone.message}</p>}
             </div>
           </div>
+
           <div className="form-group mb-20">
             <label className="form-label">Email Address</label>
-            <input className={`form-input ${errors.email ? 'error' : ''}`} type="email" placeholder="Answers delivered here" {...register('email')} />
+            <input className={`form-input ${errors.email ? 'error' : ''}`} type="email" placeholder="Answers will be delivered here" {...register('email')} />
             {errors.email && <p className="form-error">{errors.email.message}</p>}
           </div>
+
           {(['question1', 'question2', 'question3'] as const).map((key, i) => (
             <div className="form-group mb-16" key={key}>
               <label className="form-label">
@@ -292,81 +309,115 @@ export default function QuickConsultForm() {
               )}
             </div>
           ))}
-          <button type="submit" className="btn btn-primary w-full" style={{ justifyContent: 'center', marginTop: 8 }}>
-            Verify Email {SKIP_PAYMENT ? '& Submit' : `& Pay ${priceDisplay}`}
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+
+          <button type="submit" className="btn btn-primary w-full" style={{ justifyContent: 'center', marginTop: 8 }} disabled={busy}>
+            {busy
+              ? <><Spinner size={16} color="white" /> Sending OTP…</>
+              : <>Verify Email & {SKIP_PAYMENT ? 'Submit' : `Pay ${priceDisplay}`} →</>
+            }
           </button>
         </form>
       )}
 
-      {/* ── Phase: OTP ── */}
+      {/* ── Phase: OTP ──────────────────────────────────────── */}
       {phase === 'otp' && (
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>📧</div>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, marginBottom: 6 }}>
-            Verify Email
+            Verify Your Email
           </h3>
           <p style={{ fontSize: 14, color: 'var(--color-slate)', marginBottom: 24 }}>
             Code sent to <strong style={{ color: 'var(--color-midnight-ink)' }}>{formData?.email}</strong>
           </p>
+
           <div className="otp-group mb-24">
-            {otpDigits.map((d, i) => (
+            {digits.map((d, i) => (
               <input
                 key={i}
                 ref={el => { inputRefs.current[i] = el; }}
                 className="otp-digit"
-                type="text" inputMode="numeric" maxLength={1} value={d}
+                type="text"
+                inputMode="numeric"
+                maxLength={1}
+                value={d}
                 autoFocus={i === 0}
-                onChange={e => handleOtpChange(e, i)}
-                onKeyDown={e => handleOtpKeyDown(e, i)}
+                disabled={busy}
+                onChange={e => handleDigitChange(e, i)}
+                onKeyDown={e => handleDigitKeyDown(e, i)}
               />
             ))}
           </div>
-          <button className="btn btn-primary w-full" style={{ justifyContent: 'center' }} onClick={verifyOtp} disabled={verifying}>
-            {verifying ? (
-              <>Verifying… <Spinner size={16} /></>
-            ) : (
-              `Verify & ${SKIP_PAYMENT ? 'Submit Questions' : 'Continue to Payment'}`
-            )}
+
+          <button
+            className="btn btn-primary w-full"
+            style={{ justifyContent: 'center' }}
+            onClick={() => runVerify(digits.join(''))}
+            disabled={busy || digits.join('').length < 6}
+          >
+            {busy
+              ? <><Spinner size={16} color="white" /> Verifying…</>
+              : `Verify & ${SKIP_PAYMENT ? 'Submit Questions' : 'Continue to Payment'}`
+            }
           </button>
+
           <button
             style={{ marginTop: 12, fontSize: 13, color: 'var(--color-slate)', background: 'none', border: 'none', cursor: 'pointer', width: '100%' }}
-            onClick={() => setPhase('form')}
+            onClick={() => { setPhase('form'); setError(''); }}
+            disabled={busy}
           >
             ← Change email
           </button>
         </div>
       )}
 
-      {/* ── Phase: Submitting (dev bypass) ── */}
+      {/* ── Phase: Submitting ────────────────────────────────── */}
       {phase === 'submitting' && (
-        <div style={{ textAlign: 'center', padding: '32px 0' }}>
-          <Spinner size={36} color="var(--color-voltage-violet)" />
+        <div style={{ textAlign: 'center', padding: '40px 0' }}>
+          <Spinner size={40} color="var(--color-voltage-violet)" />
           <p style={{ fontSize: 14, color: 'var(--color-slate)', marginTop: 16 }}>
             Submitting your questions…
           </p>
         </div>
       )}
 
-      {/* ── Phase: Payment ── */}
+      {/* ── Phase: Payment ──────────────────────────────────── */}
       {phase === 'payment' && (
         <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>🔐</div>
-          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, marginBottom: 6 }}>
+          <div style={{ fontSize: 40, marginBottom: 16 }}>🔐</div>
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, marginBottom: 8 }}>
             Complete Payment
           </h3>
-          <p style={{ fontSize: 14, color: 'var(--color-slate)', marginBottom: 24 }}>
-            Email verified ✓ — Proceed to secure checkout
+          <p style={{ fontSize: 14, color: 'var(--color-slate)', marginBottom: 12 }}>
+            Email verified ✓
           </p>
+
+          {/* Order summary */}
+          <div style={{ background: 'var(--color-fog)', borderRadius: 12, padding: '16px 20px', marginBottom: 24, textAlign: 'left' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <span style={{ fontSize: 14, color: 'var(--color-graphite)' }}>Quick Consultation</span>
+              <span style={{ fontSize: 14, color: 'var(--color-graphite)' }}>{priceDisplay}</span>
+            </div>
+            <div style={{ borderTop: '1px solid var(--color-mist)', marginTop: 10, paddingTop: 10, display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontWeight: 700, fontSize: 14 }}>Total</span>
+              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 16, color: 'var(--color-voltage-violet)' }}>
+                {priceDisplay}
+              </span>
+            </div>
+          </div>
+
           <button
             className="btn btn-primary w-full"
             style={{ justifyContent: 'center', fontSize: 16 }}
             onClick={pay}
+            disabled={busy}
           >
-            Pay {priceDisplay} Securely
+            {busy
+              ? <><Spinner size={16} color="white" /> Opening checkout…</>
+              : <>Pay {priceDisplay} Securely</>
+            }
           </button>
           <p style={{ fontSize: 12, color: 'var(--color-slate)', marginTop: 12 }}>
-            Powered by Razorpay · All cards, UPI, net banking
+            Powered by Razorpay · Cards, UPI, Net banking
           </p>
         </div>
       )}

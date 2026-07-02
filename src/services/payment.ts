@@ -1,11 +1,12 @@
 // src/services/payment.ts
 // ============================================================
-// Razorpay integration — loads SDK, opens checkout, verifies
+// Razorpay integration — loads SDK, opens checkout, returns the
+// raw payment response. Does NOT assume a slot-booking flow —
+// callers (BookingModal, QuickConsultForm) decide what to do
+// with the payment result (confirmBooking vs submitQuickConsult).
 // ============================================================
 
-import { createRazorpayOrder, confirmBooking, releaseSlot } from '../lib/api';
-import { slotsCache } from '../lib/cache';
-import type { ConfirmResult } from '../lib/types';
+import { createRazorpayOrder } from '../lib/api';
 
 declare global {
   interface Window {
@@ -57,28 +58,40 @@ export function loadRazorpaySdk(): Promise<void> {
 }
 
 // ── Payment Result ────────────────────────────────────────
+// Generic result — the raw Razorpay response is handed back so the
+// caller can confirm a booking, submit a quick consult, etc.
 export type PaymentResult =
-  | { status: 'success'; confirm: ConfirmResult }
+  | { status: 'success'; razorpayPaymentId: string; razorpayOrderId: string; razorpaySignature: string }
   | { status: 'failed';  error: string }
   | { status: 'dismissed' };
 
 // ── Main Payment Flow ─────────────────────────────────────
+// Generic Razorpay checkout launcher. Creates an order server-side
+// (price is always resolved/verified on the backend via serviceId),
+// opens checkout, and resolves with the raw payment response.
+//
+// IMPORTANT: this function does NOT call confirmBooking or any
+// other "what happens after payment" endpoint. That is the
+// responsibility of the caller, since different flows (slot
+// booking vs quick consult) need different post-payment actions.
 export async function initiatePayment(params: {
-  serviceId:   string;
-  amount:      number;          // in paise
+  serviceId:   string;          // used by the server to resolve canonical price
+  amount:      number;          // in paise — for display only; server re-verifies
   currency:    string;
-  bookingId:   string;
-  slotId:      string;
-  lockToken:   string;
+  receiptId:   string;          // unique receipt/reference id (bookingId or qc id)
   name:        string;
   email:       string;
   phone:       string;
   description: string;
   siteName:    string;
+  addonIds?:   string[];        // optional — passed to server for price verification
+  notes?:      Record<string, string>;
+  onDismiss?:  () => void | Promise<void>;  // optional cleanup hook (e.g. releaseSlot)
 }): Promise<PaymentResult> {
   const {
-    serviceId, amount, currency, bookingId, slotId, lockToken,
+    serviceId, amount, currency, receiptId,
     name, email, phone, description, siteName,
+    addonIds = [], notes = {}, onDismiss,
   } = params;
 
   // 1. Load SDK
@@ -88,13 +101,14 @@ export async function initiatePayment(params: {
     return { status: 'failed', error: 'Payment gateway failed to load. Please check your connection.' };
   }
 
-  // 2. Create Razorpay order on the backend
+  // 2. Create Razorpay order on the backend (price resolved server-side)
   const orderResult = await createRazorpayOrder({
     amount,
     currency,
-    receipt: bookingId,
+    receipt: receiptId,
     serviceId,
     email,
+    addonIds,
   });
 
   if (!orderResult.ok) {
@@ -113,38 +127,22 @@ export async function initiatePayment(params: {
       description,
       order_id:    orderId,
       prefill:     { name, email, contact: phone },
-      notes:       { bookingId, slotId },
+      notes,
       theme:       { color: '#f9a825' }, // gold
-      handler: async (response) => {
-        // 4. Payment succeeded — confirm on backend
-        const confirmResult = await confirmBooking({
-          bookingId,
-          slotId,
-          lockToken,
+      handler: (response) => {
+        // Hand the raw payment proof back to the caller —
+        // they decide what to confirm/submit.
+        resolve({
+          status: 'success',
           razorpayPaymentId: response.razorpay_payment_id,
           razorpayOrderId:   response.razorpay_order_id,
           razorpaySignature: response.razorpay_signature,
-          name,
-          email,
-          phone,
-          serviceId,
         });
-
-        if (!confirmResult.ok) {
-          resolve({ status: 'failed', error: confirmResult.error });
-          return;
-        }
-
-        // Bust slot cache after confirmed booking
-        slotsCache.invalidateAll();
-        resolve({ status: 'success', confirm: confirmResult.data });
       },
       modal: {
         confirm_close: true,
         ondismiss: async () => {
-          // 5. User dismissed — release the lock
-          await releaseSlot(slotId, lockToken);
-          slotsCache.invalidateAll();
+          if (onDismiss) await onDismiss();
           resolve({ status: 'dismissed' });
         },
       },

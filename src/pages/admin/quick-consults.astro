@@ -3,7 +3,8 @@
 import AdminLayout from '../../layouts/AdminLayout.astro';
 import AdminQuickConsultManager from '../../components/admin/AdminQuickConsultManager';
 ---
-
 <AdminLayout title="Quick Consults" activeSection="quick-consults">
+  <h1 class="admin-section-title">Quick Consults</h1>
+  <p class="admin-section-desc">Review submitted questions and send written answers to clients.</p>
   <AdminQuickConsultManager client:load />
 </AdminLayout>
